@@ -747,6 +747,9 @@ class TATrendStrategyIndicator(Indicator):
         bear_buffer_length = self.days_buffer_bear * self.bars_per_day
 
         i = 1
+        if self.taData_trend_strat.atr_4h is None:
+            return
+
         delta= self.taData_trend_strat.atr_4h * self.trend_atr_fac
         while i < len(self.taData_trend_strat.highs_trail_4h_vec)-1:
             if self.taData_trend_strat.highs_trail_4h_vec[-i] > self.taData_trend_strat.highs_trail_4h_vec[-i - 1]+delta:
