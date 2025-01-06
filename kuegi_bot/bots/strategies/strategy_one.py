@@ -172,8 +172,8 @@ class StrategyOne(TrendStrategy):
             self.ta_data_trend_strat = self.get_ta_data_trend_strategy()
             self.ta_strat_one.set_ta_data_trend_strat(self.ta_data_trend_strat)
             self.ta_strat_one.on_tick(bars)
-            self.logger.info('Current ta indicator values of strat one:')
-            self.logger.info(vars(self.ta_strat_one.taData_strat_one))
+            #self.logger.info('Current ta indicator values of strat one:')
+            #self.logger.info(vars(self.ta_strat_one.taData_strat_one))
 
     def position_got_opened_or_changed(self, position: Position, bars: List[Bar], account: Account, open_positions):
         super().position_got_opened_or_changed(position, bars, account, open_positions)
@@ -265,7 +265,7 @@ class StrategyOne(TrendStrategy):
 
         self.logger.info("New bar. Checking for new entry options")
         self.logger.info("Market Regime: "+str(self.ta_data_trend_strat.marketRegime))
-        if self.telegram is not None and not self.symbol.baseCoin == 'USDT':
+        if self.telegram is not None and "BTC" in self.symbol.symbol:
             self.telegram.send_log("Market Regime: "+str(self.ta_data_trend_strat.marketRegime))
             self.telegram.send_log("NATR: %.2f" % self.ta_data_trend_strat.natr_4h)
 
@@ -365,10 +365,14 @@ class StrategyOne(TrendStrategy):
                 # go LONG
                 if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions:
                     self.open_new_position(PositionDirection.LONG, bars, stopLong, open_positions, longEntry,"StopLimit")
+                    if self.telegram is not None:
+                        self.telegram.send_log("Sending long StopLimit entry order.")
 
                 # go SHORT
                 if not foundShort and self.shortsAllowed and directionFilter <= 0 and shortEntry is not None and bearish_conditions:
                     self.open_new_position(PositionDirection.SHORT, bars, stopShort, open_positions, shortEntry,"StopLimit")
+                    if self.telegram is not None:
+                        self.telegram.send_log("Sending short StopLimit entry order.")
 
                 # Save parameters
                 '''self.data_strat_one.longEntry = longEntry
@@ -592,7 +596,7 @@ class StrategyOne(TrendStrategy):
             self.logger.info("Shorts not allowed.")
             if self.telegram is not None:
                 self.telegram.send_log("Shorts not allowed.")
-        if not longed and not shorted and not self.symbol.baseCoin == 'USDT':
+        if not longed and not shorted and 'BTC' in self.symbol.symbol:
             self.logger.info("No new entries for now.")
             if self.telegram is not None:
                 self.telegram.send_log("No new entries for now.")
