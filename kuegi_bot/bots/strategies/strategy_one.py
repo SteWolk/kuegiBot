@@ -330,7 +330,7 @@ class StrategyOne(TrendStrategy):
                 self.logger.info("Sending additional long.")
                 if self.telegram is not None:
                     self.telegram.send_log("Sending additional long.")
-                entry = bars[1].close - 0.5 * atr
+                entry = bars[0].close - 0.5 * atr
                 self.open_new_position(entry=entry,
                                        stop=entry - atr,
                                        open_positions=open_positions,
@@ -366,13 +366,13 @@ class StrategyOne(TrendStrategy):
                 if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions:
                     self.open_new_position(PositionDirection.LONG, bars, stopLong, open_positions, longEntry,"StopLimit")
                     if self.telegram is not None:
-                        self.telegram.send_log("Sending long StopLimit entry order.")
+                        self.telegram.send_log("Entry strategy 2: Sending long StopLimit entry order.")
 
                 # go SHORT
                 if not foundShort and self.shortsAllowed and directionFilter <= 0 and shortEntry is not None and bearish_conditions:
                     self.open_new_position(PositionDirection.SHORT, bars, stopShort, open_positions, shortEntry,"StopLimit")
                     if self.telegram is not None:
-                        self.telegram.send_log("Sending short StopLimit entry order.")
+                        self.telegram.send_log("Entry strategy 2: Sending short StopLimit entry order.")
 
                 # Save parameters
                 '''self.data_strat_one.longEntry = longEntry

@@ -337,6 +337,7 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
         if (direction == PositionDirection.SHORT and (amount >= 0 or entry > stop)) or\
                 (direction == PositionDirection.LONG and (amount <= 0 or entry < stop)):
             self.logger.warn("entry/stop mismatch or wrong amount")
+            self.logger.warn("entry/stop mismatch or wrong amount: entry="+str(entry)+", stop="+str(stop)+", amount="+str(amount)+". Direction: "+str(direction))
             return
 
         # Decide on entry order type
