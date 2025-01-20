@@ -64,7 +64,7 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
 
         # cancel entries not allowed
         if orderType == OrderType.ENTRY and position.status == PositionStatus.PENDING and \
-                (self.cancel_on_filter and not self.entries_allowed(bars)):
+                (self.cancel_on_filter and not self.entries_allowed(bars)) and order.trigger_price is None:
             self.logger.info("canceling cause channel got invalid: " + position.id)
             to_cancel.append(order)
             del open_positions[position.id]
