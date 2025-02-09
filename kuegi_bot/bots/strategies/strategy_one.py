@@ -504,8 +504,8 @@ class StrategyOne(TrendStrategy):
 
             if foundSwingLow and foundSwingHigh and not shorted and not alreadyShorted and not alreadyLonged and self.shortsAllowed:
                 condition_2 = bars[1].open > self.ta_data_trend_strat.ema_w
-                condition_3 = not market_bullish#not needed
-                if bars[1].close < bars[idxSwingLow].low and condition_2:# and condition_3:
+                condition_10 = (bars[1].high - bars[1].low) < atr
+                if bars[1].close < bars[idxSwingLow].low and condition_2 and condition_10:
                     self.logger.info("Shorting swing break.")
                     if self.telegram is not None:
                         self.telegram.send_log("Shorting swing break.")
@@ -586,6 +586,62 @@ class StrategyOne(TrendStrategy):
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.SHORT,
+                                       ExecutionType="Market")
+
+        long_pullbacks = False
+        if long_pullbacks:
+            condition_1 = bars[1].low < middleband - 2.6 * std
+            condition_3 = natr_4h < 1.9
+            condition_4 = self.ta_trend_strat.taData_trend_strat.rsi_d < 35
+            condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < 35
+            condition_6 = bars[1].close < self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-2]
+            condition_7 = self.ta_trend_strat.taData_trend_strat.rsi_w > 20
+            if condition_1 and condition_3 and condition_4 and condition_5 and not condition_6 and condition_7:
+                self.logger.info("Longing pullback.")
+                if self.telegram is not None:
+                    self.telegram.send_log("Longing pullback.")
+                longed = True
+                self.open_new_position(entry=bars[0].close,
+                                       stop=bars[0].close - 0.6*atr,
+                                       open_positions=open_positions,
+                                       bars=bars,
+                                       direction=PositionDirection.LONG,
+                                       ExecutionType="Market")
+
+        new_strat = True
+        if new_strat and not longed and self.longsAllowed:
+            condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * 2.6 > self.ta_data_trend_strat.volume_4h
+            condition_2 = (bars[1].close - bars[1].open) > 2 * atr
+            condition_3 = natr_4h < 1.4
+            if condition_1 and condition_2 and condition_3:
+                self.logger.info("Longing momentum 1")
+                if self.telegram is not None:
+                    self.telegram.send_log("Longing momentum 1.")
+                longed = True
+                self.open_new_position(entry=bars[0].close,
+                                       stop=bars[0].close - 0.8 * atr,
+                                       open_positions=open_positions,
+                                       bars=bars,
+                                       direction=PositionDirection.LONG,
+                                       ExecutionType="Market")
+
+        new_strat_2 = True
+        if new_strat_2 and not longed and self.longsAllowed:
+            condition_1 = (bars[4].open - bars[4].close) > 0.9 * self.ta_data_trend_strat.atr_4h_vec[-4]
+            condition_3 = bars[2].open < bars[4].open > bars[2].low > bars[4].low
+            condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
+            condition_6 = 70 < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > 65
+            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * 1.2 > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
+            if condition_1 and condition_3 and condition_4 and condition_6 and condition_10:
+                self.logger.info("Longing dump reversal")
+                if self.telegram is not None:
+                    self.telegram.send_log("Longing dump reversal.")
+                longed = True
+                self.open_new_position(entry=bars[0].close,
+                                       stop=bars[4].low,
+                                       open_positions=open_positions,
+                                       bars=bars,
+                                       direction=PositionDirection.LONG,
                                        ExecutionType="Market")
 
         if not self.longsAllowed:
