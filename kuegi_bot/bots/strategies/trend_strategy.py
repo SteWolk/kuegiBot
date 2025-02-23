@@ -367,7 +367,7 @@ class TrendStrategy(StrategyWithTradeManagement):
 
                     elif order.amount < 0:  # SL for LONGs
                         if self.stop_at_trail:
-                            new_trigger_price = max(self.ta_trend_strat.taData_trend_strat.lows_trail_4h - self.ta_trend_strat.taData_trend_strat.atr_4h*2, new_trigger_price)
+                            new_trigger_price = max(self.ta_trend_strat.taData_trend_strat.lows_trail_4h - self.ta_trend_strat.taData_trend_strat.atr_4h, new_trigger_price)
                         if self.stop_at_lowerband:
                             new_trigger_price = max(lower_band, new_trigger_price)
                         if self.be_by_middleband and \
