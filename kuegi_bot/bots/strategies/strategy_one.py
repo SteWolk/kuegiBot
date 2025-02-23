@@ -55,7 +55,7 @@ class StrategyOne(TrendStrategy):
                  plotTrailsAndEMAs: bool = False, plotBBands:bool=False, plotATR:bool=False, trend_atr_fac: float = 0.5,
                  trend_var_1: float = 0,
                  # Risk
-                 risk_with_trend: float = 1, risk_counter_trend: float = 1, risk_ranging: float = 1,
+                 risk_with_trend: float = 1, risk_counter_trend: float = 1, risk_ranging: float = 1, risk_fac_shorts = 1,
                  # SL
                  sl_atr_fac: float = 2, be_by_middleband: bool = True, be_by_opposite: bool = True, stop_at_middleband: bool = True,
                  tp_at_middleband: bool = True, atr_buffer_fac: float = 0, tp_on_opposite: bool = True, stop_at_new_entry: bool = False,

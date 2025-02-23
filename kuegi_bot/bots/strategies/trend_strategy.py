@@ -42,7 +42,7 @@ class TrendStrategy(StrategyWithTradeManagement):
                  plotIndicators: bool = False, plot_RSI: bool = False, trend_atr_fac: float = 0.5,
                  trend_var_1: float = 0,
                  # Risk
-                 risk_with_trend: float = 1, risk_counter_trend:float = 1, risk_ranging: float = 1,
+                 risk_with_trend: float = 1, risk_counter_trend:float = 1, risk_ranging: float = 1, risk_fac_shorts: float = 1,
                  sl_upper_bb_std_fac: float = 1, sl_lower_bb_std_fac: float = 1,
                  # SL input parameters
                  be_by_middleband: bool = True, be_by_opposite: bool = True, stop_at_middleband: bool = True,
@@ -80,6 +80,7 @@ class TrendStrategy(StrategyWithTradeManagement):
         self.risk_with_trend = risk_with_trend
         self.risk_counter_trend = risk_counter_trend
         self.risk_ranging = risk_ranging
+        self.risk_fac_shorts = risk_fac_shorts
         # SL entry parameters
         self.be_by_middleband = be_by_middleband
         self.be_by_opposite = be_by_opposite
@@ -301,6 +302,8 @@ class TrendStrategy(StrategyWithTradeManagement):
         if (self.ta_trend_strat.taData_trend_strat.marketRegime == MarketRegime.BULL and delta > 0) or \
                 (self.ta_trend_strat.taData_trend_strat.marketRegime == MarketRegime.BEAR and delta < 0):
             risk = self.risk_with_trend
+            if delta<0:
+                risk = risk/self.risk_fac_shorts  # less risk for shorts
         elif (self.ta_trend_strat.taData_trend_strat.marketRegime == MarketRegime.BEAR and delta > 0) or \
                 (self.ta_trend_strat.taData_trend_strat.marketRegime == MarketRegime.BULL and delta < 0):
             risk = self.risk_counter_trend

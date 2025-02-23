@@ -116,6 +116,7 @@ def start_bot(botSettings,telegram:TelegramBot=None):
                     risk_with_trend=stratSettings.RISK_WITH_TREND*risk_reference,
                     risk_counter_trend=stratSettings.RISK_COUNTER_TREND*risk_reference,
                     risk_ranging=stratSettings.RISK_RANGING*risk_reference,
+                    risk_fac_shorts=stratSettings.RISK_FAC_SHORTS,
                     # SL
                     sl_atr_fac=stratSettings.SL_ATR_FAC,
                     be_by_middleband=stratSettings.BE_BY_MIDDLEBAND,
