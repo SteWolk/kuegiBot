@@ -45,6 +45,9 @@ class StrategyOne(TrendStrategy):
                  entry_8_vol_fac: float = 2.0,
                  entry_9_std: float = 1, entry_9_4h_rsi: int = 50, entry_9_atr: float = 2,
                  entry_10_natr: float = 2, entry_10_natr_ath: float = 2, entry_10_rsi_4h: int = 50,
+                 entry_11: bool = False, entry_12: bool = False,
+                 entry_11_vol: float = 3.0, entry_11_atr: float = 3.0, entry_11_natr: float = 3.0,
+                 entry_12_vol: float = 3.0, entry_12_rsi_4h: float = 3.0, entry_12_atr: float = 3.0,
                  tp_fac_strat_one: float = 0,
                  plotStrategyOneData: bool = False, plotTrailsStatOne: bool = False,
                  # TrendStrategy
@@ -111,6 +114,8 @@ class StrategyOne(TrendStrategy):
         self.entry_7 = entry_7
         self.entry_9 = entry_9
         self.entry_10 = entry_10
+        self.entry_11 = entry_11
+        self.entry_12 = entry_12
         self.risk_ref = risk_ref
         self.reduceRisk = reduceRisk
         self.entry_1_atr_fac = entry_1_atr_fac
@@ -147,6 +152,12 @@ class StrategyOne(TrendStrategy):
         self.entry_10_natr = entry_10_natr
         self.entry_10_natr_ath = entry_10_natr_ath
         self.entry_10_rsi_4h = entry_10_rsi_4h
+        self.entry_11_vol = entry_11_vol
+        self.entry_11_atr = entry_11_atr
+        self.entry_11_natr = entry_11_natr
+        self.entry_12_vol = entry_12_vol
+        self.entry_12_rsi_4h = entry_12_rsi_4h
+        self.entry_12_atr = entry_12_atr
         self.sl_atr_fac = sl_atr_fac
         self.shortsAllowed = shortsAllowed
         self.longsAllowed = longsAllowed
@@ -608,30 +619,28 @@ class StrategyOne(TrendStrategy):
                                        direction=PositionDirection.LONG,
                                        ExecutionType="Market")
 
-        new_strat = True
-        if new_strat and not longed and self.longsAllowed:
-            condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * 2.6 > self.ta_data_trend_strat.volume_4h
-            condition_2 = (bars[1].close - bars[1].open) > 2 * atr
-            condition_3 = natr_4h < 1.4
+        if self.entry_11 and not longed and self.longsAllowed:
+            condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_11_vol > self.ta_data_trend_strat.volume_4h
+            condition_2 = (bars[1].close - bars[1].open) > self.entry_11_atr * atr
+            condition_3 = natr_4h < self.entry_11_natr
             if condition_1 and condition_2 and condition_3:
                 self.logger.info("Longing momentum 1")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing momentum 1.")
                 longed = True
                 self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close - 0.8 * atr,
+                                       stop=bars[0].close - self.sl_atr_fac * atr,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
                                        ExecutionType="Market")
 
-        new_strat_2 = True
-        if new_strat_2 and not longed and self.longsAllowed:
-            condition_1 = (bars[4].open - bars[4].close) > 0.9 * self.ta_data_trend_strat.atr_4h_vec[-4]
+        if self.entry_12 and not longed and self.longsAllowed:
+            condition_1 = (bars[4].open - bars[4].close) > self.entry_12_atr * self.ta_data_trend_strat.atr_4h_vec[-4]
             condition_3 = bars[2].open < bars[4].open > bars[2].low > bars[4].low
             condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
-            condition_6 = 70 < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > 65
-            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * 1.2 > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
+            condition_6 = 70 < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
+            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
             if condition_1 and condition_3 and condition_4 and condition_6 and condition_10:
                 self.logger.info("Longing dump reversal")
                 if self.telegram is not None:
