@@ -85,6 +85,7 @@ def start_bot(botSettings,telegram:TelegramBot=None):
                     entry_11_natr=stratSettings.ENTRY_11_NATR,
                     entry_12_vol=stratSettings.ENTRY_12_VOL,
                     entry_12_rsi_4h=stratSettings.ENTRY_12_RSI_4H,
+                    entry_12_max_rsi_4h=stratSettings.ENTRY_12_MAX_RSI_4H,
                     entry_12_atr=stratSettings.ENTRY_12_ATR,
                     h_highs_trail_period=stratSettings.H_HIGHS_TRAIL_PERIOD,
                     h_lows_trail_period=stratSettings.H_LOWS_TRAIL_PERIOD,

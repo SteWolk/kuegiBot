@@ -47,7 +47,7 @@ class StrategyOne(TrendStrategy):
                  entry_10_natr: float = 2, entry_10_natr_ath: float = 2, entry_10_rsi_4h: int = 50,
                  entry_11: bool = False, entry_12: bool = False,
                  entry_11_vol: float = 3.0, entry_11_atr: float = 3.0, entry_11_natr: float = 3.0,
-                 entry_12_vol: float = 3.0, entry_12_rsi_4h: float = 3.0, entry_12_atr: float = 3.0,
+                 entry_12_vol: float = 3.0, entry_12_rsi_4h: int = 3.0, entry_12_atr: float = 3.0, entry_12_max_rsi_4h: int = 90,
                  tp_fac_strat_one: float = 0,
                  plotStrategyOneData: bool = False, plotTrailsStatOne: bool = False,
                  # TrendStrategy
@@ -80,7 +80,7 @@ class StrategyOne(TrendStrategy):
             plotIndicators = plotIndicators, plot_RSI = plot_RSI,
             trend_var_1 = trend_var_1,
             # Risk
-            risk_with_trend = risk_with_trend, risk_counter_trend = risk_counter_trend, risk_ranging = risk_ranging,
+            risk_with_trend = risk_with_trend, risk_counter_trend = risk_counter_trend, risk_ranging = risk_ranging, risk_fac_shorts=risk_fac_shorts,
             # SL
             be_by_middleband = be_by_middleband, be_by_opposite = be_by_opposite,
             stop_at_middleband = stop_at_middleband, tp_at_middleband = tp_at_middleband,
@@ -157,6 +157,7 @@ class StrategyOne(TrendStrategy):
         self.entry_11_natr = entry_11_natr
         self.entry_12_vol = entry_12_vol
         self.entry_12_rsi_4h = entry_12_rsi_4h
+        self.entry_12_max_rsi_4h = entry_12_max_rsi_4h
         self.entry_12_atr = entry_12_atr
         self.sl_atr_fac = sl_atr_fac
         self.shortsAllowed = shortsAllowed
@@ -639,15 +640,15 @@ class StrategyOne(TrendStrategy):
             condition_1 = (bars[4].open - bars[4].close) > self.entry_12_atr * self.ta_data_trend_strat.atr_4h_vec[-4]
             condition_3 = bars[2].open < bars[4].open > bars[2].low > bars[4].low
             condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
-            condition_6 = 70 < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
+            condition_6 = self.entry_12_max_rsi_4h < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
             condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
             if condition_1 and condition_3 and condition_4 and condition_6 and condition_10:
-                self.logger.info("Longing dump reversal")
+                self.logger.info("Longing reversal")
                 if self.telegram is not None:
-                    self.telegram.send_log("Longing dump reversal.")
+                    self.telegram.send_log("Longing reversal.")
                 longed = True
                 self.open_new_position(entry=bars[0].close,
-                                       stop=bars[4].low,
+                                       stop=bars[0].close - self.sl_atr_fac * atr,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
