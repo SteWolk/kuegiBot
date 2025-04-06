@@ -383,6 +383,7 @@ class ByBitInterface(ExchangeWithWS):
                         if not prev.active and prev.execution_tstamp == 0:
                             prev.execution_tstamp = datetime.utcnow().timestamp()
                         self.orders[order.exchange_id] = prev
+                        self.logger.info("order update: %s" % (str(order)))
                 elif topic == 'execution':
                     #{'blockTradeId': '', 'category': 'inverse', 'execFee': '0.00000006',
                     # 'execId': '4e995905-e9f5-51f1-bdf6-5c4d03a27b7d',
@@ -395,6 +396,9 @@ class ByBitInterface(ExchangeWithWS):
                     # 'side': 'Buy', 'tradeIv': '', 'underlyingPrice': '', 'closedSize': '0',
                     # 'seq': 34198439752, 'createType': 'CreateByUser'}
                     for execution in msgs:
+                        if execution['symbol'] != self.symbol:
+                            self.logger.info("INFO: order execution in:" + str(execution['symbol']))
+                            continue
                         #self.logger.info("execution msg arrived: %s" % (str(execution)))
                         if execution['orderId'] in self.orders.keys():
                             sideMulti = 1 if execution['side'] == "Buy" else -1
@@ -411,11 +415,12 @@ class ByBitInterface(ExchangeWithWS):
                             self.logger.info("got order execution: %s %.4f @ %.4f " % (
                                 execution['orderLinkId'], float(execution['execQty']) * sideMulti,
                                 float(execution['execPrice'])))
-                        else:
+                        '''else:
                             self.initOrders()
                             self.initPositions()
                             self.logger.info("WARNING: could not find the executed order in database!")
-                            self.logger.info("Order ID: " + str(execution['orderId']))
+                            self.logger.info("executed order ID: " + str(execution['orderId']) +
+                                             ", compared to own database: " + str(self.orders.keys()))'''
                 elif topic == 'position':
                     #print('position msg arrived:')
                     # {'bustPrice': '0.00', 'category': 'inverse', 'createdTime': '1627542388255',
@@ -438,7 +443,7 @@ class ByBitInterface(ExchangeWithWS):
                                 self.longPos.quantity = float(pos['size'])
                                 self.longPos.avgEntryPrice = float(pos['entryPrice'])
                                 sizefac = 1
-                            elif pos["side"] == "None":
+                            elif pos["side"] == "None" or len(pos["side"]) == 0:
                                 self.longPos.quantity = 0
                                 self.longPos.avgEntryPrice = 0
                                 self.shortPos.quantity = 0
