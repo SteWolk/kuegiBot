@@ -37,7 +37,7 @@ class StrategyOne(TrendStrategy):
                  shortsAllowed: bool = False, longsAllowed: bool = False,
                  entry_2_max_natr: float = 1, entry_2_min_rsi_4h: int = 50, entry_2_min_rsi_d:int = 80,
                  entry_2_min_natr: float = 1, entry_2_min_rsi_4h_short:int=50,entry_2_min_rsi_d_short:int=50,
-                 entry_3_atr_fac: float = 1, entry_5_natr: float = 2, entry_5_rsi_d: int = 40, entry_5_rsi_4h: int = 80,
+                 entry_3_atr_fac: float = 1, entry_5_rsi_d: int = 40, entry_5_rsi_4h: int = 80,
                  entry_5_atr_fac: float = 0.8, entry_5_trail_1_period: int = 10, entry_5_trail_2_period: int = 10,
                  entry_5_vol_fac: float = 2.0,
                  entry_6_rsi_4h_max: int = 90, entry_6_max_natr: float = 2,
@@ -132,7 +132,6 @@ class StrategyOne(TrendStrategy):
         self.entry_3_rsi_4h = entry_3_rsi_4h
         self.entry_4_std_fac = entry_4_std_fac
         self.entry_4_std_fac_reclaim = entry_4_std_fac_reclaim
-        self.entry_5_natr = entry_5_natr
         self.entry_5_rsi_d = entry_5_rsi_d
         self.entry_5_rsi_4h = entry_5_rsi_4h
         self.entry_5_atr_fac = entry_5_atr_fac
@@ -450,7 +449,7 @@ class StrategyOne(TrendStrategy):
         if self.entry_5 and not shorted and self.shortsAllowed:
             trail_broke = (bars[1].close < self.ta_strat_one.taData_strat_one.h_body_lows_trail_vec[-self.entry_5_trail_1_period:-2]).all()
             opened_above_trail = (bars[1].open > self.ta_strat_one.taData_strat_one.h_body_lows_trail_vec[-self.entry_5_trail_2_period:-2]).all()
-            condition_1 = natr_4h < self.entry_5_natr
+            condition_1 = True
             condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_d < self.entry_5_rsi_d
             condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_5_rsi_4h
             condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_5_vol_fac < self.ta_data_trend_strat.volume_4h
