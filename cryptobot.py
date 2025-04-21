@@ -60,7 +60,6 @@ def start_bot(botSettings,telegram:TelegramBot=None):
                     entry_3_rsi_4h=stratSettings.ENTRY_3_RSI_4H,
                     entry_4_std_fac=stratSettings.ENTRY_4_STD_FAC,
                     entry_4_std_fac_reclaim=stratSettings.ENTRY_4_STD_FAC_RECLAIM,
-                    entry_5_natr=stratSettings.ENTRY_5_NATR,
                     entry_5_rsi_d=stratSettings.ENTRY_5_RSI_D,
                     entry_5_rsi_4h=stratSettings.ENTRY_5_RSI_4H,
                     entry_5_atr_fac=stratSettings.ENTRY_5_ATR_FAC,
