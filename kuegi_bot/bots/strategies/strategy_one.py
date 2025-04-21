@@ -401,13 +401,13 @@ class StrategyOne(TrendStrategy):
             condition_1 = bars[1].high > self.ta_data_trend_strat.highs_trail_4h_vec[-2]
             condition_2 = natr_4h < self.entry_3_max_natr
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] < self.entry_3_rsi_4h
-            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_3_vol_fac > self.ta_data_trend_strat.volume_4h
+            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_3_vol_fac < self.ta_data_trend_strat.volume_4h
             if condition_1 and condition_2 and condition_3 and condition_4:# and condition_5:
                 longed = True
                 self.logger.info("Longing trail breakout by StopLimit.")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing trail breakout by StopLimit.")
-                delta = -0.2 * atr
+                delta = -self.entry_3_atr_fac * atr
                 self.open_new_position(entry=bars[0].close + delta,
                                        stop=bars[1].low + delta,
                                        open_positions=open_positions,
