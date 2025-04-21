@@ -612,7 +612,7 @@ class TATrendStrategyIndicator(Indicator):
         self.taData_trend_strat.atr_trail_mix = (self.taData_trend_strat.atr_4h + (self.taData_trend_strat.highs_trail_4h - self.taData_trend_strat.lows_trail_4h)/5)/2
 
         # Update RSI for 4H timeframe
-        self.taData_trend_strat.rsi_4h_vec = talib.RSI(close[-self.rsi_4h_period-1:], self.rsi_4h_period)
+        self.taData_trend_strat.rsi_4h_vec = talib.RSI(close[-min(self.max_4h_period,200+self.rsi_4h_period):], self.rsi_4h_period)
 
         # Update Volume for 4H timeframe
         self.taData_trend_strat.volume_4h = volume[-1]
