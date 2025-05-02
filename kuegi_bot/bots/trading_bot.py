@@ -412,6 +412,7 @@ class TradingBot:
                     # assume position was opened without us realizing (during downtime)
                     self.logger.warn(
                         "pending position with no entry order but open position looks like it was opened: %s" % (posId))
+                    pos.filled_entry = pos.wanted_entry
                     pos.last_filled_entry = pos.wanted_entry
                     pos.entry_tstamp = time.time()
                     pos.max_filled_amount += pos.amount
