@@ -126,9 +126,9 @@ class ByBitInterface(ExchangeWithWS):
             # types: entry / stop-limit, SL, TP, etc.
             # execution type: Market and Limit
             if self.last < order.trigger_price:
-                triggerDirection = 1
+                triggerDirection = 1 # triggered when market price rises to triggerPrice
             else:
-                triggerDirection = 2
+                triggerDirection = 2 # triggered when market price falls to triggerPrice
 
             if (self.last - order.trigger_price) * order.amount >= 0:
                 # condition is already true
@@ -415,12 +415,12 @@ class ByBitInterface(ExchangeWithWS):
                             self.logger.info("got order execution: %s %.4f @ %.4f " % (
                                 execution['orderLinkId'], float(execution['execQty']) * sideMulti,
                                 float(execution['execPrice'])))
-                        '''else:
-                            self.initOrders()
+                        else:
+                            '''self.initOrders()
                             self.initPositions()
-                            self.logger.info("WARNING: could not find the executed order in database!")
-                            self.logger.info("executed order ID: " + str(execution['orderId']) +
-                                             ", compared to own database: " + str(self.orders.keys()))'''
+                            self.logger.info("WARNING: could not find the executed order in database!")'''
+                            self.logger.info("orderID not known. Executed order ID: " + str(execution['orderId']) +
+                                             ", compared to own database: " + str(self.orders.keys()))
                 elif topic == 'position':
                     #print('position msg arrived:')
                     # {'bustPrice': '0.00', 'category': 'inverse', 'createdTime': '1627542388255',

@@ -341,13 +341,13 @@ class StrategyOne(TrendStrategy):
                 self.logger.info("Sending additional long.")
                 if self.telegram is not None:
                     self.telegram.send_log("Sending additional long.")
-                entry = bars[0].close - 0.5 * atr
+                entry = bars[0].close - 0.2 * atr
                 self.open_new_position(entry=entry,
                                        stop=entry - atr,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
-                                       ExecutionType="StopLimit")
+                                       ExecutionType="Limit")
 
         # limit order - entries
         if self.entry_2:
@@ -404,16 +404,16 @@ class StrategyOne(TrendStrategy):
             condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_3_vol_fac < self.ta_data_trend_strat.volume_4h
             if condition_1 and condition_2 and condition_3 and condition_4:# and condition_5:
                 longed = True
-                self.logger.info("Longing trail breakout by StopLimit.")
+                self.logger.info("Longing trail breakout by limit order.")
                 if self.telegram is not None:
-                    self.telegram.send_log("Longing trail breakout by StopLimit.")
+                    self.telegram.send_log("Longing trail breakout by limit order.")
                 delta = -self.entry_3_atr_fac * atr
                 self.open_new_position(entry=bars[0].close + delta,
                                        stop=bars[1].low + delta,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
-                                       ExecutionType="StopLimit")
+                                       ExecutionType="Limit")
 
         # Long strength when certain BBand levels are reclaimed
         if self.entry_4:
@@ -597,26 +597,6 @@ class StrategyOne(TrendStrategy):
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
-
-        long_pullbacks = False
-        if long_pullbacks:
-            condition_1 = bars[1].low < middleband - 2.6 * std
-            condition_3 = natr_4h < 1.9
-            condition_4 = self.ta_trend_strat.taData_trend_strat.rsi_d < 35
-            condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < 35
-            condition_6 = bars[1].close < self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-2]
-            condition_7 = self.ta_trend_strat.taData_trend_strat.rsi_w > 20
-            if condition_1 and condition_3 and condition_4 and condition_5 and not condition_6 and condition_7:
-                self.logger.info("Longing pullback.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing pullback.")
-                longed = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close - 0.6*atr,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
                                        ExecutionType="Market")
 
         if self.entry_11 and not longed and self.longsAllowed:

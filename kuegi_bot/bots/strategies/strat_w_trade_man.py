@@ -338,6 +338,8 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
                 (direction == PositionDirection.LONG and (amount <= 0 or entry < stop)):
             self.logger.warn("entry/stop mismatch or wrong amount")
             self.logger.warn("entry/stop mismatch or wrong amount: entry="+str(entry)+", stop="+str(stop)+", amount="+str(amount)+". Direction: "+str(direction))
+            if self.telegram is not None:
+                self.telegram.send_log("entry/stop mismatch or wrong amount")
             return
 
         # Decide on entry order type
