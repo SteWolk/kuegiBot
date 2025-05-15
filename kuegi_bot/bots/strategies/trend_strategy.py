@@ -72,7 +72,7 @@ class TrendStrategy(StrategyWithTradeManagement):
             atr_4h_period= atr_4h_period, natr_4h_period_slow= natr_4h_period_slow, bbands_4h_period= bbands_4h_period,
             sl_upper_bb_std_fac = sl_upper_bb_std_fac,
             sl_lower_bb_std_fac = sl_lower_bb_std_fac, trend_var_1= trend_var_1, oversold_limit_w_rsi = 30, reset_level_of_oversold_rsi = 50,
-            rsi_4h_period = rsi_4h_period, volume_sma_4h_period= volume_sma_4h_period, trend_atr_fac = trend_atr_fac
+            rsi_4h_period = rsi_4h_period, rsi_d_period = 14, volume_sma_4h_period= volume_sma_4h_period, trend_atr_fac = trend_atr_fac
         )
         self.plotIndicators = plotIndicators
         self.plot_RSI = plot_RSI
