@@ -325,8 +325,10 @@ class StrategyOne(TrendStrategy):
             condition_2b = natr_4h < self.entry_10_natr_ath
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] < self.entry_10_rsi_4h
             condition_4 = not market_bearish
-            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4
-            conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4
+            condition_5 = bars[1].close - bars[1].open > bars[2].close - bars[2].open
+            condition_6 = bars[1].open > bars[4].close
+            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5
+            conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4 and condition_6
             if conditions_set_1 or conditions_set_2:
                 longed = True
                 self.logger.info("Longing confirmed trail breakout.")
@@ -356,9 +358,9 @@ class StrategyOne(TrendStrategy):
 
             if longEntry is not None and shortEntry is not None:
                 condition_1 = natr_4h < self.entry_2_max_natr
-                condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_2_min_rsi_4h
+                condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_2_min_rsi_4h
                 condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d
-                condition_8 = market_bullish
+                condition_8 = not market_bearish#market_bullish
                 bullish_conditions = condition_1 and condition_2 and condition_3 and condition_8
 
                 condition_4 = natr_4h > self.entry_2_min_natr
@@ -398,18 +400,18 @@ class StrategyOne(TrendStrategy):
 
         # long trail breakout
         if self.entry_3 and not longed and self.longsAllowed:
-            condition_1 = bars[1].high > self.ta_data_trend_strat.highs_trail_4h_vec[-2]
-            condition_2 = natr_4h < self.entry_3_max_natr
-            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] < self.entry_3_rsi_4h
-            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_3_vol_fac < self.ta_data_trend_strat.volume_4h
-            if condition_1 and condition_2 and condition_3 and condition_4:# and condition_5:
+            condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
+            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
+            condition_5 = bars[1].open > bars[1].close
+            if condition_1 and condition_5 and market_bullish and condition_3:
                 longed = True
                 self.logger.info("Longing trail breakout by limit order.")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing trail breakout by limit order.")
-                delta = -self.entry_3_atr_fac * atr
-                self.open_new_position(entry=bars[0].close + delta,
-                                       stop=bars[1].low + delta,
+                entry = bars[0].close - 0.2 * atr
+                sl = entry - atr
+                self.open_new_position(entry=entry,
+                                       stop=sl,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
@@ -603,6 +605,7 @@ class StrategyOne(TrendStrategy):
             condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_11_vol > self.ta_data_trend_strat.volume_4h
             condition_2 = (bars[1].close - bars[1].open) > self.entry_11_atr * atr
             condition_3 = natr_4h < self.entry_11_natr
+            #condition_5 = self.ta_data_trend_strat.rsi_MA_vec[-1] > self.ta_data_trend_strat.rsi_MA_vec[-2]
             if condition_1 and condition_2 and condition_3:
                 self.logger.info("Longing momentum 1")
                 if self.telegram is not None:
