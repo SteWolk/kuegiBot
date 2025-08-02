@@ -327,7 +327,8 @@ class StrategyOne(TrendStrategy):
             condition_4 = not market_bearish
             condition_5 = bars[1].close - bars[1].open > bars[2].close - bars[2].open
             condition_6 = bars[1].open > bars[4].close
-            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5
+            condition_7 = self.ta_data_trend_strat.rsi_d > 50
+            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7
             conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4 and condition_6
             if conditions_set_1 or conditions_set_2:
                 longed = True
@@ -402,8 +403,9 @@ class StrategyOne(TrendStrategy):
         if self.entry_3 and not longed and self.longsAllowed:
             condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
+            condition_4 = self.ta_data_trend_strat.rsi_d > 70
             condition_5 = bars[1].open > bars[1].close
-            if condition_1 and condition_5 and market_bullish and condition_3:
+            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4:
                 longed = True
                 self.logger.info("Longing trail breakout by limit order.")
                 if self.telegram is not None:
@@ -499,9 +501,9 @@ class StrategyOne(TrendStrategy):
                 alreadyShorted = True
 
             if foundSwingHigh and foundSwingLow and not longed and not alreadyLonged and not alreadyShorted and self.longsAllowed:
-                condition_1 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_6_rsi_4h_max
+                condition_1 = 80 > self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1]# > self.entry_6_rsi_4h_max
                 condition_2 = natr_4h < self.entry_6_max_natr
-                condition_3 = market_bullish
+                condition_3 = not market_bearish#market_bullish
                 if bars[1].close > bars[idxSwingHigh].high and condition_2 and condition_1 and condition_3:
                     self.logger.info("Longing swing breakout.")
                     if self.telegram is not None:
