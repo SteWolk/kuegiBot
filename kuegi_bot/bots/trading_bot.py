@@ -190,8 +190,10 @@ class TradingBot:
             if position.filled_entry is not None:
                 position.filled_entry = (position.filled_entry * position.max_filled_amount + executed_price * amount) \
                                         / (position.max_filled_amount + amount)
+                self.logger.info(f"filled entry is not None: {position.filled_entry}")
             else:
                 position.filled_entry = executed_price
+                self.logger.info(f"filled entry was None: {position.filled_entry}")
             position.last_filled_entry = executed_price
             position.entry_tstamp = tstamp
             position.max_filled_amount += amount

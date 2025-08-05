@@ -199,24 +199,28 @@ class TimedExit(ExitModule):
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
                     if bars[0].close < position.wanted_entry:
                         order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.longs_min_to_breakeven*60:
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
                     if bars[0].close > position.wanted_entry:
                         order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.shorts_min_to_exit * 60:
                 if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
                     if bars[0].close > position.wanted_entry:
                         order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.shorts_min_to_breakeven*60:
                 if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
                     if bars[0].open < position.wanted_entry:
                         order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if order.trigger_price == 0 or position.wanted_entry == 0:
