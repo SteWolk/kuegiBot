@@ -435,9 +435,11 @@ class TradingBot:
                     self.logger.warn(
                         "found position with no stop in market. added stop for it: %s with %.1f contracts" % (
                             posId, pos.current_open_amount))
-                    self.order_interface.send_order(
-                        Order(orderId=self.generate_order_id(posId, OrderType.SL), amount=-pos.current_open_amount,
-                              trigger=pos.initial_stop))
+                    order_ID = self.generate_order_id(posId, OrderType.SL)
+                    amount = -pos.current_open_amount
+                    trigger = pos.initial_stop
+                    self.logger.info("Sending SL order with ID: %s, amount: %.1f, and trigger: %.1f" % (order_ID, amount, trigger))
+                    self.order_interface.send_order(Order(orderId=order_ID, amount=amount,trigger=trigger))
                 else:
                     self.logger.warn(
                         "found position with no stop in market. %s with %.1f contracts. but no initial stop on position had to close" % (

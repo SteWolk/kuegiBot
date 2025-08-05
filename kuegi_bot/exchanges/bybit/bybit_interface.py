@@ -167,6 +167,7 @@ class ByBitInterface(ExchangeWithWS):
                     positionIdx = int(0)))
                 if result is not None:
                     order.exchange_id = result['orderId']
+                    self.logger.info(str(result))
                     #self.orders[order.exchange_id] = order
             else:
                 result =  self.handle_result(lambda:self.pybit.place_order(
