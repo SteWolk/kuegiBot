@@ -368,13 +368,8 @@ class StrategyOne(TrendStrategy):
                 condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d
                 condition_8 = not market_bearish#market_bullish
                 bullish_conditions = condition_1 and condition_2 and condition_3 and condition_8
-
-                condition_4 = natr_4h > self.entry_2_min_natr
-                condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_2_min_rsi_4h_short
-                condition_6 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d_short
-                condition_7 = market_bearish
                 condition_9 = not market_trending
-                bearish_conditions = condition_4 and condition_5 and condition_6 and condition_7
+                bearish_conditions = False
 
                 foundLong = False
                 foundShort = False
