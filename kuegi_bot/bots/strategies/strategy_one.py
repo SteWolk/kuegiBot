@@ -289,11 +289,15 @@ class StrategyOne(TrendStrategy):
         atr = self.ta_data_trend_strat.atr_4h
         atr_trail_mix = self.ta_data_trend_strat.atr_trail_mix
         natr_4h = self.ta_data_trend_strat.natr_4h
+        atr_min = atr
+        if natr_4h < 1:
+            atr_min = atr + atr * (1 - natr_4h)
         middleband = self.ta_data_trend_strat.bbands_4h.middleband
         middleband_vec = self.ta_data_trend_strat.bbands_4h.middleband_vec
         market_bullish = self.ta_data_trend_strat.marketRegime == MarketRegime.BULL
         market_bearish = self.ta_data_trend_strat.marketRegime == MarketRegime.BEAR
         market_ranging = self.ta_data_trend_strat.marketRegime == MarketRegime.RANGING
+        market_trending = self.ta_data_trend_strat.marketDynamic == MarketDynamic.TRENDING
         range_limit = len(middleband_vec)
 
         # short daily sfp
@@ -328,7 +332,8 @@ class StrategyOne(TrendStrategy):
             condition_5 = bars[1].close - bars[1].open > bars[2].close - bars[2].open
             condition_6 = bars[1].open > bars[4].close
             condition_7 = self.ta_data_trend_strat.rsi_d > 50
-            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7
+            condition_8 = not market_trending
+            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7 and condition_8
             conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4 and condition_6
             if conditions_set_1 or conditions_set_2:
                 longed = True
@@ -346,7 +351,7 @@ class StrategyOne(TrendStrategy):
                     self.telegram.send_log("Sending additional long.")
                 entry = bars[0].close - 0.2 * atr
                 self.open_new_position(entry=entry,
-                                       stop=entry - atr,
+                                       stop=entry - atr_min,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
@@ -368,6 +373,7 @@ class StrategyOne(TrendStrategy):
                 condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_2_min_rsi_4h_short
                 condition_6 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d_short
                 condition_7 = market_bearish
+                condition_9 = not market_trending
                 bearish_conditions = condition_4 and condition_5 and condition_6 and condition_7
 
                 foundLong = False
@@ -377,7 +383,7 @@ class StrategyOne(TrendStrategy):
                                                                      stopLong, stopShort, longAmount, shortAmount)
                 # Set entries if no orders are found and the market conditions allow it
                 # go LONG
-                if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions:
+                if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions and condition_9:
                     self.open_new_position(PositionDirection.LONG, bars, stopLong, open_positions, longEntry,"StopLimit")
                     if self.telegram is not None:
                         self.telegram.send_log("Entry strategy 2: Sending long StopLimit entry order.")
@@ -405,7 +411,8 @@ class StrategyOne(TrendStrategy):
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
             condition_4 = self.ta_data_trend_strat.rsi_d > 70
             condition_5 = bars[1].open > bars[1].close
-            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4:
+            condition_8 = not market_trending
+            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4 and condition_8:
                 longed = True
                 self.logger.info("Longing trail breakout by limit order.")
                 if self.telegram is not None:
@@ -535,12 +542,10 @@ class StrategyOne(TrendStrategy):
         # short entry 7
         if self.entry_7 and not shorted and self.shortsAllowed:
             condition_1 = bars[2].high > bars[1].high
-            condition_2 = bars[2].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-3]
+            condition_2 = bars[2].high > self.ta_data_trend_strat.highs_trail_4h_vec[-3]
             condition_4 = bars[2].close < bars[2].open
-            condition_7 = self.ta_data_trend_strat.volume_sma_4h_vec[-3] < self.ta_data_trend_strat.volume_4h * self.entry_7_vol_fac
-            condition_8 = bars[1].open > middleband + std * self.entry_7_std_fac
-            condition_9 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_7_4h_rsi
-            if condition_1 and condition_2 and condition_4 and condition_7 and condition_8 and condition_9:
+            condition_10 = not market_trending
+            if condition_1 and condition_2 and condition_4 and condition_10:
                 self.logger.info("Shorting 4H SFP")
                 if self.telegram is not None:
                     self.telegram.send_log("Shorting 4H SFP")
@@ -609,9 +614,9 @@ class StrategyOne(TrendStrategy):
             condition_3 = natr_4h < self.entry_11_natr
             #condition_5 = self.ta_data_trend_strat.rsi_MA_vec[-1] > self.ta_data_trend_strat.rsi_MA_vec[-2]
             if condition_1 and condition_2 and condition_3:
-                self.logger.info("Longing momentum 1")
+                self.logger.info("Longing momentum")
                 if self.telegram is not None:
-                    self.telegram.send_log("Longing momentum 1.")
+                    self.telegram.send_log("Longing momentum")
                 longed = True
                 self.open_new_position(entry=bars[0].close,
                                        stop=bars[0].close - self.sl_atr_fac * atr,
@@ -626,13 +631,14 @@ class StrategyOne(TrendStrategy):
             condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
             condition_6 = self.entry_12_max_rsi_4h < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
             condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
-            if condition_1 and condition_3 and condition_4 and condition_6 and condition_10:
+            condition_8 = not market_trending #or self.var_1
+            if condition_1 and condition_3 and condition_4 and condition_6 and condition_10 and condition_8:
                 self.logger.info("Longing reversal")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing reversal.")
                 longed = True
                 self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close - self.sl_atr_fac * atr,
+                                       stop=bars[0].close - self.sl_atr_fac * atr_min,
                                        open_positions=open_positions,
                                        bars=bars,
                                        direction=PositionDirection.LONG,
