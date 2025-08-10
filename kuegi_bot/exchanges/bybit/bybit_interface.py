@@ -199,7 +199,7 @@ class ByBitInterface(ExchangeWithWS):
                     orderLinkId=order.id,
                     timeInForce="GTC",
                     positionIdx = int(0)))
-                self.logger("Placed SL order. Exchange response: %s" % str(result))
+                self.logger.info("Placed SL order. Exchange response: %s" % str(result))
                 if result is not None:
                     order.exchange_id = result['orderId']
                     self.logger.info("Assigned exchange id to the submitted order: %s" % order.print_info())
