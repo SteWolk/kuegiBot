@@ -199,8 +199,13 @@ class ByBitInterface(ExchangeWithWS):
                     orderLinkId=order.id,
                     timeInForce="GTC",
                     positionIdx = int(0)))
+                self.logger("Placed SL order. Exchange response: %s" % str(result))
                 if result is not None:
                     order.exchange_id = result['orderId']
+                    self.logger.info("Assigned exchange id to the submitted order: %s" % order.print_info())
+                    self.logger.info("My known orders currently: ")
+                    for o in self.orders():
+                        self.logger.info("Next order: %s" % str(o))
                     #self.orders[order.exchange_id] = order
         else:
             result = self.handle_result(lambda: self.pybit.place_order(
@@ -380,6 +385,8 @@ class ByBitInterface(ExchangeWithWS):
                                 order.stop_triggered= True # there was a stop and its no longer there -> it was triggered and order turned to linear
                             if order.limit_price is None:
                                 order.limit_price = prev.limit_price
+                        else:
+                            self.logger.info("Order unknown: %s" % (str(order)))
                         prev = order
                         if not prev.active and prev.execution_tstamp == 0:
                             prev.execution_tstamp = datetime.utcnow().timestamp()
