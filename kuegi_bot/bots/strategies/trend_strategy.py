@@ -754,11 +754,12 @@ class TATrendStrategyIndicator(Indicator):
             return
 
         delta= self.taData_trend_strat.atr_4h * self.trend_atr_fac
+        delta_2 = self.taData_trend_strat.atr_4h * 0.2
         while i < len(self.taData_trend_strat.highs_trail_4h_vec)-1:
             if self.taData_trend_strat.highs_trail_4h_vec[-i] > self.taData_trend_strat.highs_trail_4h_vec[-i - 1]+delta:
                 high_break = True
                 break
-            elif self.taData_trend_strat.lows_trail_4h_vec[-i] < self.taData_trend_strat.lows_trail_4h_vec[-i - 1]:
+            elif self.taData_trend_strat.lows_trail_4h_vec[-i] < self.taData_trend_strat.lows_trail_4h_vec[-i - 1]-delta_2:
                 low_break = True
                 break
             i += 1

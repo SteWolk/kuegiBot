@@ -619,6 +619,16 @@ class StrategyOne(TrendStrategy):
                                        bars=bars,
                                        direction=PositionDirection.LONG,
                                        ExecutionType="Market")
+                self.logger.info("Sending additional long")
+                if self.telegram is not None:
+                    self.telegram.send_log("Sending additional long")
+                entry = bars[0].close - atr
+                self.open_new_position(entry=entry,
+                                       stop=entry - 2 * atr_min,
+                                       open_positions=open_positions,
+                                       bars=bars,
+                                       direction=PositionDirection.LONG,
+                                       ExecutionType="Limit")
 
         if self.entry_12 and not longed and self.longsAllowed:
             condition_1 = (bars[4].open - bars[4].close) > self.entry_12_atr * self.ta_data_trend_strat.atr_4h_vec[-4]
