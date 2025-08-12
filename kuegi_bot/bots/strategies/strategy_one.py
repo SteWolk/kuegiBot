@@ -277,7 +277,7 @@ class StrategyOne(TrendStrategy):
         self.logger.info("New bar. Checking for new entry options")
         self.logger.info("Market Regime: "+str(self.ta_data_trend_strat.marketRegime))
         if self.telegram is not None and "BTC" in self.symbol.symbol:
-            self.telegram.send_log("Market Regime: "+str(self.ta_data_trend_strat.marketRegime))
+            self.telegram.send_log("Market Regime: "+str(self.ta_data_trend_strat.marketRegime)+ ", " + str(self.ta_data_trend_strat.marketDynamic))
             self.telegram.send_log("NATR: %.2f" % self.ta_data_trend_strat.natr_4h)
 
         longed = False
