@@ -333,7 +333,8 @@ class StrategyOne(TrendStrategy):
             condition_6 = bars[1].open > bars[4].close
             condition_7 = self.ta_data_trend_strat.rsi_d > 50
             condition_8 = not market_trending
-            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7 and condition_8
+            condition_9 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * 2.6 > self.ta_data_trend_strat.volume_4h
+            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7 and condition_8 and condition_9
             conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4 and condition_6
             if conditions_set_1 or conditions_set_2:
                 longed = True
@@ -537,10 +538,11 @@ class StrategyOne(TrendStrategy):
         # short entry 7
         if self.entry_7 and not shorted and self.shortsAllowed:
             condition_1 = bars[2].high > bars[1].high
-            condition_2 = bars[2].high > self.ta_data_trend_strat.highs_trail_4h_vec[-3]
-            condition_4 = bars[2].close < bars[2].open
+            condition_2 = bars[2].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-3]
+            condition_3 = abs(bars[1].close-bars[1].open) > abs(bars[1].close - bars[1].low)
+            condition_5 = bars[2].high - max(bars[2].close,bars[2].open) > abs(bars[2].close - bars[2].open)
             condition_10 = not market_trending
-            if condition_1 and condition_2 and condition_4 and condition_10:
+            if condition_1 and condition_2 and condition_3 and condition_5 and condition_10:
                 self.logger.info("Shorting 4H SFP")
                 if self.telegram is not None:
                     self.telegram.send_log("Shorting 4H SFP")

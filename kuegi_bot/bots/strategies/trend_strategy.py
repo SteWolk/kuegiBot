@@ -364,6 +364,14 @@ class TrendStrategy(StrategyWithTradeManagement):
                             new_trigger_price = bars[1].low + self.ta_trend_strat.taData_trend_strat.atr_4h * self.moving_sl_atr_fac
                         if self.stop_at_trail:
                             new_trigger_price = min(self.ta_trend_strat.taData_trend_strat.highs_trail_4h + self.ta_trend_strat.taData_trend_strat.atr_4h*8, new_trigger_price)
+                        if True:
+                            middleband = self.ta_trend_strat.taData_trend_strat.bbands_4h.middleband
+                            std = self.ta_trend_strat.taData_trend_strat.bbands_4h.std
+                            cond_1 = new_trigger_price > (middleband + 0.5 * std)
+                            cond_2 = bars[1].low < middleband - 3 * std
+                            cond_3 = self.ta_trend_strat.taData_trend_strat.rsi_w > 55
+                            if cond_1 and cond_2 and cond_3:
+                                new_trigger_price = bars[1].close+0.1 * self.ta_trend_strat.taData_trend_strat.atr_4h
 
                     elif order.amount < 0:  # SL for LONGs
                         if self.stop_at_trail:
@@ -790,7 +798,7 @@ class TATrendStrategyIndicator(Indicator):
         close = talibbars.close
         high = talibbars.high
         low = talibbars.low
-        period = 30
+        period = 35
         adx = talib.ADX(high, low, close, period)[-1]
         if not np.isnan(adx):
             if adx > 20:
