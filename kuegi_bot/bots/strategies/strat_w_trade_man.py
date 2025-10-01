@@ -242,8 +242,11 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
                     self.order_interface.update_order(order)
 
         if not gotStop:
+            stop = position.initial_stop
+            if (stop > bars[0].close and position.amount > 0) or (stop < bars[0].close and position.amount < 0):
+                self.telegram.send_log("stop loss / current price mismatch:" + str(stop) + " vs. " + str(bars[0].close))
             order = Order(orderId=TradingBot.generate_order_id(positionId=position.id, type=OrderType.SL),
-                          trigger=position.initial_stop, amount=-position.amount)
+                          trigger=stop, amount=-position.amount)
             self.order_interface.send_order(order)
 
         if self.tp_fac > 0 and not gotTp:

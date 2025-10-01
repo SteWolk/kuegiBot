@@ -181,6 +181,8 @@ class TradingBot:
         if pos_id not in self.open_positions.keys():
             self.logger.info("executed order not found in positions: " + order_id)
             return
+        else:
+            self.logger.info("executed order found in positions: " + order_id)
         position: Position = self.open_positions[pos_id]
 
         order_type = self.order_type_from_order_id(order_id)
@@ -193,7 +195,7 @@ class TradingBot:
                 self.logger.info(f"filled entry is not None: {position.filled_entry}")
             else:
                 position.filled_entry = executed_price
-                self.logger.info(f"filled entry was None: {position.filled_entry}")
+                self.logger.info(f"filled entry was None. Using executed price: {position.filled_entry}")
             position.last_filled_entry = executed_price
             position.entry_tstamp = tstamp
             position.max_filled_amount += amount
