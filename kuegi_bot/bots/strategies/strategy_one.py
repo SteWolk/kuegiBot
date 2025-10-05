@@ -410,9 +410,9 @@ class StrategyOne(TrendStrategy):
             condition_8 = not market_trending
             if condition_1 and condition_5 and market_bullish and condition_3 and condition_4 and condition_8:
                 longed = True
-                self.logger.info("Longing trail breakout by limit order.")
+                self.logger.info("Longing trail break pullback.")
                 if self.telegram is not None:
-                    self.telegram.send_log("Longing trail breakout by limit order.")
+                    self.telegram.send_log("Longing trail break pullback.")
                 entry = bars[0].close - 0.2 * atr
                 sl = entry - atr
                 self.open_new_position(entry=entry,
@@ -421,6 +421,28 @@ class StrategyOne(TrendStrategy):
                                        bars=bars,
                                        direction=PositionDirection.LONG,
                                        ExecutionType="Limit")
+
+        entry_14 = True
+        # long trail tap
+        if entry_14 and not longed and self.longsAllowed:
+            condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2] > bars[1].close
+            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > 70
+            condition_4 = self.ta_data_trend_strat.rsi_d > 0
+            limit = self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1] + 0.8 * (self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-1] - self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1])
+            condition_5 = bars[1].close < limit
+            if condition_1 and condition_3 and condition_4 and condition_5 and market_bullish:
+                longed = True
+                self.logger.info("Longing trail breakout by limit order.")
+                if self.telegram is not None:
+                    self.telegram.send_log("Longing trail breakout by limit order.")
+                entry = bars[0].close# - 0.2 *self.var_1 * atr
+                sl = entry - 1.2 * atr
+                self.open_new_position(entry=entry,
+                                       stop=sl,
+                                       open_positions=open_positions,
+                                       bars=bars,
+                                       direction=PositionDirection.LONG,
+                                       ExecutionType="Market")
 
         # Long strength when certain BBand levels are reclaimed
         if self.entry_4:
@@ -609,8 +631,9 @@ class StrategyOne(TrendStrategy):
             condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_11_vol > self.ta_data_trend_strat.volume_4h
             condition_2 = (bars[1].close - bars[1].open) > self.entry_11_atr * atr
             condition_3 = natr_4h < self.entry_11_natr
+            #condition_4 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.var_1
             #condition_5 = self.ta_data_trend_strat.rsi_MA_vec[-1] > self.ta_data_trend_strat.rsi_MA_vec[-2]
-            if condition_1 and condition_2 and condition_3:
+            if condition_1 and condition_2 and condition_3:# and condition_4:
                 self.logger.info("Longing momentum")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing momentum")
