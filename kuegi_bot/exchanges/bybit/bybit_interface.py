@@ -132,6 +132,7 @@ class ByBitInterface(ExchangeWithWS):
 
             if (self.last - order.trigger_price) * order.amount >= 0:
                 # condition is already true
+                self.logger.info("Removed trigger price!")
                 order.trigger_price = None
 
         if order.limit_price is not None:
