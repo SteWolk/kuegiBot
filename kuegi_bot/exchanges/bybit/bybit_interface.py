@@ -120,6 +120,10 @@ class ByBitInterface(ExchangeWithWS):
         self.logger.info("cancel order result: %s" % (str(result)))
 
     def internal_send_order(self, order: Order):
+        self.logger.info("Received order placement request: %s" % (str(order)))
+
+        orderType = TradingBot.order_type_from_order_id(order.id)
+        triggerDirection = None
 
         if order.trigger_price is not None:
             # conditional
@@ -130,10 +134,18 @@ class ByBitInterface(ExchangeWithWS):
             else:
                 triggerDirection = 2 # triggered when market price falls to triggerPrice
 
-            if (self.last - order.trigger_price) * order.amount >= 0:
-                # condition is already true
-                self.logger.info("Removed trigger price!")
-                order.trigger_price = None
+            self.logger.info("Trigger direction: %s" % (str(triggerDirection)))
+
+            if orderType != OrderType.SL:
+                if (self.last - order.trigger_price) * order.amount >= 0:
+                    # condition is already true for ENTRY/TP
+                    self.logger.warning(
+                        f"Removed trigger price because condition considered true. "
+                        f"last={self.last}, trigger={order.trigger_price}, amount={order.amount}, orderId={order.id}"
+                    )
+                    order.trigger_price = None
+        else:
+            self.logger.info("No trigger direction and no trigger_price.")
 
         if order.limit_price is not None:
             # limit order
@@ -144,13 +156,6 @@ class ByBitInterface(ExchangeWithWS):
             # execution type: Market
             order_type = "Market"
 
-        if order.trigger_price is not None:
-            if self.last < order.trigger_price:
-                triggerDirection = 1
-            else:
-                triggerDirection = 2
-
-        orderType = TradingBot.order_type_from_order_id(order.id)
         if orderType == OrderType.ENTRY or orderType == OrderType.TP:
             if order.trigger_price is not None:
                 # conditional order
@@ -202,7 +207,9 @@ class ByBitInterface(ExchangeWithWS):
                 if result is not None:
                     order.exchange_id = result['orderId']
                     self.orders[order.exchange_id] = order
+                    self.logger.info("Response to SL order: %s" % (str(result)))
         else:
+            self.logger.info("Order type is not ENTRY, TP, SL: %s" % (str(orderType)))
             result = self.handle_result(lambda: self.pybit.place_order(
                 side=("Buy" if order.amount > 0 else "Sell"),
                 symbol=self.symbol,
@@ -257,6 +264,7 @@ class ByBitInterface(ExchangeWithWS):
                     timeInForce="GTC"))
                 if result is not None:
                     order.exchange_id = result['orderId']
+                    #self.orders[order.exchange_id] = order
         else:
             print("Case not covered")
             self.logger.info("Case not covered")
@@ -487,17 +495,20 @@ class ByBitInterface(ExchangeWithWS):
                     else:
                         self.bars = msgs
                         gotTick = True
-
-                elif topic == 'instrument_info.100ms.' + self.symbol:
-                    obj = msgs
-                    if 'update' in obj.keys():
-                        obj = obj['update'][0]
-                    if obj['symbol'] == self.symbol and 'last_price_e4' in obj.keys():
-                        self.last = float(obj['last_price_e4'])# / 10000
-                elif topic == 'tickers.'+self.symbol:
-                    #print('ticker message: ')
-                    #print(msgs)
-                    pass
+                elif topic == 'trade.' + self.symbol:
+                    last_trade = msgs[0]
+                    self.last = float(last_trade["price"])
+                elif topic == 'tickers.' + self.symbol:
+                    # msgs is usually a list with one dict, but be defensive:
+                    ticker = msgs[0] if isinstance(msgs, list) and msgs else msgs
+                    if isinstance(ticker, dict) and ticker.get("symbol") == self.symbol:
+                        # V5 uses lastPrice as string
+                        lp = ticker.get("lastPrice")
+                        if lp is not None:
+                            try:
+                                self.last = float(lp)
+                            except ValueError:
+                                self.logger.warning(f"Could not parse lastPrice from ticker: {lp!r}")
                 elif topic == 'wallet':
                     #print(str(topic))
                     for wallet in msgs:
