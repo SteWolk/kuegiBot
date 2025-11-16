@@ -170,6 +170,7 @@ class ExchangeWithWS(ExchangeInterface):
         self.last_order_sync= 0
 
         self.orders = {}
+        self.orders_by_link_id = {}
         self.positions = {}
         self.bars: List[Bar] = []
         self.last = 0
@@ -210,6 +211,7 @@ class ExchangeWithWS(ExchangeInterface):
         # resync doesn't get the executed orders, but maybe we don't know about the execution yet -> keep recent executions
         executed = [o for o in prev.values() if not o.active]
         self.orders = {}
+        self.orders_by_link_id = {}
         rem_exec = 0
         try:
             self.initOrders()

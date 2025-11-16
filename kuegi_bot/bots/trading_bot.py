@@ -410,14 +410,37 @@ class TradingBot:
             pos = self.open_positions[posId]
             if pos.status == PositionStatus.PENDING or pos.status == PositionStatus.TRIGGERED:
                 # should have the opening order in the system, but doesn't
-                # not sure why: in doubt: not create wrong orders
                 if remainingPosition * pos.amount > 0 and abs(
                         round(remainingPosition, self.symbol.quantityPrecision)) >= abs(pos.amount):
                     # assume position was opened without us realizing (during downtime)
                     self.logger.warn(
                         "pending position with no entry order but open position looks like it was opened: %s" % (posId))
-                    pos.filled_entry = pos.wanted_entry
-                    pos.last_filled_entry = pos.wanted_entry
+
+                    avg_entry_from_exchange = None
+
+                    # Try to backfill from the exchange (via order_interface)
+                    try:
+                        if hasattr(self.order_interface, "get_avg_price_for_position"):
+                            avg_entry_from_exchange = self.order_interface.get_avg_price_for_position(pos)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"failed to backfill filled_entry from exchange for {posId}: {e}"
+                        )
+
+                    if avg_entry_from_exchange is not None:
+                        pos.filled_entry = avg_entry_from_exchange
+                        pos.last_filled_entry = avg_entry_from_exchange
+                        self.logger.info(
+                            f"Backfilled filled_entry for {posId} from exchange avgPrice: {avg_entry_from_exchange}"
+                        )
+                    else:
+                        # Fallback: old behavior if exchange data not available
+                        pos.filled_entry = pos.wanted_entry
+                        pos.last_filled_entry = pos.wanted_entry
+                        self.logger.info(
+                            f"No avgPrice available, fallback to wanted_entry for {posId}: {pos.wanted_entry}"
+                        )
+
                     pos.entry_tstamp = time.time()
                     pos.max_filled_amount += pos.amount
                     pos.current_open_amount = pos.amount

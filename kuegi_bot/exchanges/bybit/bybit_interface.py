@@ -6,6 +6,7 @@ from typing import List
 
 import pybit
 from pybit.unified_trading import HTTP
+from pybit.exceptions import InvalidRequestError, FailedRequestError
 
 from kuegi_bot.exchanges.bybit.bybit_websocket import BybitWebsocket
 from kuegi_bot.utils.trading_classes import Order, Bar, TickerData, AccountPosition, \
@@ -63,39 +64,113 @@ class ByBitInterface(ExchangeWithWS):
         return not self.ws.exited and not self.ws.public.exited
 
     def initOrders(self):
-        apiOrders = self.handle_result(lambda:self.pybit.get_open_orders(category = self.category, symbol=self.symbol, orderFilter = 'Order')).get("list")
-        conditionalOrders = self.handle_result(lambda:self.pybit.get_open_orders(category = self.category, symbol=self.symbol, orderFilter = 'StopOrder')).get("list")
-        tpslOrders = self.handle_result(lambda: self.pybit.get_open_orders(category = self.category, symbol=self.symbol, orderFilter='tpslOrder')).get("list")
-        apiOrders += conditionalOrders
-        apiOrders += tpslOrders
+        activeOrders_result = self.handle_result(lambda: self.pybit.get_open_orders(category=self.category,symbol=self.symbol,orderFilter='Order'),context="get_open_orders(Order)")
+        if activeOrders_result is not None:
+            activeOrders = activeOrders_result.get("list", [])
+        else:
+            activeOrders = []
+
+        conditionalOrders_result = self.handle_result(lambda: self.pybit.get_open_orders(category=self.category,symbol=self.symbol,orderFilter='StopOrder'),context="get_open_orders(StopOrder)")
+        if conditionalOrders_result is not None:
+            conditionalOrders = conditionalOrders_result.get("list", [])
+        else:
+            conditionalOrders = []
+
+        tpslOrders_result = self.handle_result(lambda: self.pybit.get_open_orders(category=self.category,symbol=self.symbol,orderFilter='tpslOrder'),context="get_open_orders(tpslOrder)")
+        if tpslOrders_result is not None:
+            tpslOrders = tpslOrders_result.get("list", [])
+        else:
+            tpslOrders = []
+
+        apiOrders = activeOrders + conditionalOrders + tpslOrders
         self.processOrders(apiOrders)
 
         for order in self.orders.values():
             self.logger.debug(str(order))
 
     def initPositions(self):
-        api_positions= self.handle_result(lambda: self.pybit.get_positions(category = self.category, symbol=self.symbol)).get("list")
-        api_wallet = self.handle_result(lambda: self.pybit.get_wallet_balance(accountType="UNIFIED", coin=self.baseCoin)).get("list")
-        for coin in api_wallet[0]['coin']:
-            if coin['coin'] == self.baseCoin:
-                balance = float(coin['walletBalance'])
-                break
-        self.longPos = AccountPosition(self.symbol, 0, 0, balance)
-        self.shortPos = AccountPosition(self.symbol, 0, 0, balance)
-        if api_positions is not None:
-            for pos in api_positions:
-                if pos["side"] == "Sell":
-                    self.shortPos.avgEntryPrice = float(pos["avgPrice"])
-                    self.shortPos.quantity = -1 * float(pos["size"])
-                elif pos["side"] == "Buy":
-                    self.longPos.avgEntryPrice = float(pos["avgPrice"])
-                    self.longPos.quantity = float(pos["size"])
-                else:
-                    self.shortPos.avgEntryPrice = 0
-                    self.shortPos.quantity = 0
-                    self.longPos.avgEntryPrice = 0
-                    self.longPos.quantity = 0
+        # --- positions ---
+        positions_result = self.handle_result(lambda: self.pybit.get_positions(category=self.category,symbol=self.symbol),context="get_positions")
+        if positions_result is not None:
+            api_positions = positions_result.get("list", [])
+        else:
+            self.logger.error("Could not load positions from Bybit (get_positions returned None).")
+            api_positions = []
+
+        # --- wallet / balance ---
+        wallet_result = self.handle_result(lambda: self.pybit.get_wallet_balance(accountType="UNIFIED",coin=self.baseCoin),context="get_wallet_balance")
+
+        balance = 0.0  # safe default
+
+        if wallet_result is not None:
+            wallet_list = wallet_result.get("list", [])
+            if wallet_list:
+                coins = wallet_list[0].get("coin", [])
+                for coin in coins:
+                    if coin.get("coin") == self.baseCoin:
+                        try:
+                            balance = float(coin.get("walletBalance", "0"))
+                        except (TypeError, ValueError):
+                            self.logger.warning(
+                                f"Could not parse walletBalance for {self.baseCoin}: {coin.get('walletBalance')!r}"
+                            )
+                            balance = 0.0
+                        break
+            else:
+                self.logger.warning("Wallet list empty when querying get_wallet_balance.")
+        else:
+            self.logger.error("Could not load wallet balance from Bybit (get_wallet_balance returned None).")
+
+        # --- initialize AccountPosition objects ---
+        self.longPos = AccountPosition(self.symbol, 0.0, 0.0, balance)
+        self.shortPos = AccountPosition(self.symbol, 0.0, 0.0, balance)
+
+        # --- apply existing positions from API ---
+        for pos in api_positions:
+            side = pos.get("side")
+            size = float(pos.get("size", 0.0))
+            avg_price = float(pos.get("avgPrice", 0.0))
+
+            if side == "Sell":
+                self.shortPos.avgEntryPrice = avg_price
+                self.shortPos.quantity = -size
+            elif side == "Buy":
+                self.longPos.avgEntryPrice = avg_price
+                self.longPos.quantity = size
+
         self.updatePosition_internally()
+
+    def get_avg_price_for_position(self, pos) -> float | None:
+        """
+        Return the average entry price for the given Position from Bybit,
+        or None if not found / not available.
+        """
+        positions_result = self.handle_result(lambda: self.pybit.get_positions(category=self.category,symbol=self.symbol),context="get_positions")
+        if positions_result is None:
+            return None
+
+        api_positions = positions_result.get("list", [])
+        if not api_positions:
+            return None
+
+        for p in api_positions:
+            side = p.get("side")
+            size_str = p.get("size", "0")
+            try:
+                size = float(size_str)
+            except (TypeError, ValueError):
+                continue
+
+            if size == 0:
+                continue
+
+            # Match long vs short by side and sign of pos.amount
+            if pos.amount > 0 and side == "Buy":
+                return float(p.get("avgPrice", 0.0))
+            if pos.amount < 0 and side == "Sell":
+                return float(p.get("avgPrice", 0.0))
+
+        return None
 
     def updatePosition_internally(self):
         if self.longPos.quantity > -self.shortPos.quantity:
@@ -159,6 +234,7 @@ class ByBitInterface(ExchangeWithWS):
         if orderType == OrderType.ENTRY or orderType == OrderType.TP:
             if order.trigger_price is not None:
                 # conditional order
+                self.orders_by_link_id[order.id] = order
                 result = self.handle_result(lambda:self.pybit.place_order(
                     side=("Buy" if order.amount > 0 else "Sell"),
                     category=self.category,
@@ -175,6 +251,7 @@ class ByBitInterface(ExchangeWithWS):
                     order.exchange_id = result['orderId']
                     self.orders[order.exchange_id] = order
             else:
+                self.orders_by_link_id[order.id] = order
                 result =  self.handle_result(lambda:self.pybit.place_order(
                     side=("Buy" if order.amount > 0 else "Sell"),
                     symbol=self.symbol,
@@ -191,6 +268,7 @@ class ByBitInterface(ExchangeWithWS):
         elif orderType == OrderType.SL:
             if order.trigger_price is not None:
                 # conditional order
+                self.orders_by_link_id[order.id] = order
                 result = self.handle_result(lambda: self.pybit.place_order(
                     side=("Buy" if order.amount > 0 else "Sell"),
                     category=self.category,
@@ -210,6 +288,7 @@ class ByBitInterface(ExchangeWithWS):
                     self.logger.info("Response to SL order: %s" % (str(result)))
         else:
             self.logger.info("Order type is not ENTRY, TP, SL: %s" % (str(orderType)))
+            self.orders_by_link_id[order.id] = order
             result = self.handle_result(lambda: self.pybit.place_order(
                 side=("Buy" if order.amount > 0 else "Sell"),
                 symbol=self.symbol,
@@ -270,33 +349,74 @@ class ByBitInterface(ExchangeWithWS):
             self.logger.info("Case not covered")
 
     def get_current_liquidity(self) -> tuple:
-        book =  self.handle_result(lambda:self.pybit.get_orderbook(symbol=self.symbol)).get("list")
-        buy = 0
-        sell = 0
-        for entry in book:
-            if entry['side'] == "Buy":
-                buy += entry['size']
-            else:
-                sell += entry['size']
+        book_result = self.handle_result(lambda: self.pybit.get_orderbook(category=self.category,symbol=self.symbol,limit=50),context="get_orderbook(liquidity)")
+
+        if book_result is None:
+            self.logger.error("Could not load orderbook for liquidity calculation.")
+            return 0.0, 0.0
+
+        # V5-like structure: b = bids, a = asks, each entry is [price, size, ...]
+        bids = book_result.get("b") or []
+        asks = book_result.get("a") or []
+
+        buy = 0.0
+        sell = 0.0
+
+        for level in bids:
+            try:
+                size = float(level[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            buy += size
+
+        for level in asks:
+            try:
+                size = float(level[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            sell += size
 
         return buy, sell
 
     def get_bars(self, timeframe_minutes, start_offset_minutes, min_bars_needed=600) -> List[Bar]:
-        limit = 200                                         # entries per message
-        tf = 1 if timeframe_minutes <= 60 else 60           # minutes per candle requested from exchange
-        time_now = int(datetime.now().timestamp()*1000)
-        start = int(time_now - (limit-1) * tf * 60 * 1000)  # request 200 * tf
-        apibars =  self.handle_result(lambda:self.pybit.get_kline(category = self.category, symbol = self.symbol, interval = str(tf),
-                                                                  start = start, limit = limit)).get("list")
+        limit = 200  # entries per message
+        tf = 1 if timeframe_minutes <= 60 else 60  # minutes per candle requested from exchange
+        time_now = int(datetime.now().timestamp() * 1000)
+        start = int(time_now - (limit - 1) * tf * 60 * 1000)  # request 200 * tf
+
+        apibars_result = self.handle_result(lambda: self.pybit.get_kline(category=self.category,symbol=self.symbol,interval=str(tf),start=start,limit=limit),context="get_kline(initial)")
+
+        if apibars_result is None:
+            self.logger.error("Could not load initial kline data from Bybit.")
+            return []
+
+        apibars = apibars_result.get("list", [])
+        if not apibars:
+            self.logger.warning("Initial kline list from Bybit is empty.")
+            return []
 
         # get more history to fill enough
-        mult = timeframe_minutes / tf                                       # multiplier
-        min_needed_tf_candles = min_bars_needed * mult                      # number of required tf-sized candles
-        number_of_requests = 1+ math.ceil(min_needed_tf_candles/limit)      # number of requests
+        mult = timeframe_minutes / tf  # multiplier
+        min_needed_tf_candles = min_bars_needed * mult  # number of required tf-sized candles
+        number_of_requests = 1 + math.ceil(min_needed_tf_candles / limit)  # number of requests
+
         for idx in range(number_of_requests):
+            if not apibars:
+                break  # nothing to extend from
+
             start = int(apibars[-1][0]) - limit * tf * 60 * 1000
-            bars1 =  self.handle_result(lambda:self.pybit.get_kline(category = self.category, symbol = self.symbol, interval = str(tf),
-                                                                  start = start, limit = limit)).get("list")
+
+            bars1_result = self.handle_result(lambda: self.pybit.get_kline(category=self.category,symbol=self.symbol,interval=str(tf),start=start,limit=limit),context="get_kline(history)")
+
+            if bars1_result is None:
+                self.logger.warning("Stopping extra kline history load because get_kline returned None.")
+                break
+
+            bars1 = bars1_result.get("list", [])
+            if not bars1:
+                self.logger.info("No more historical kline data returned from Bybit.")
+                break
+
             apibars = apibars + bars1
 
         return self._aggregate_bars(reversed(apibars), timeframe_minutes, start_offset_minutes)
@@ -314,34 +434,71 @@ class ByBitInterface(ExchangeWithWS):
     def get_instrument(self, symbol=None):
         if symbol is None:
             symbol = self.symbol
-        fees = self.handle_result(lambda:self.pybit.get_fee_rates(symbol =symbol)).get("list")
-        makerFeeRate = float(fees[0].get("makerFeeRate"))
-        takerFeeRate = float(fees[0].get("takerFeeRate"))
-        instr = self.handle_result(lambda:self.pybit.get_instruments_info(category = self.category))
-        for entry in instr['list']:
-            if entry['symbol'] == symbol:
-                return Symbol(symbol=entry['symbol'],
-                              baseCoin=self.baseCoin,
-                              isInverse= True if self.category == 'inverse' else False,
-                              lotSize=float(entry['lotSizeFilter']['qtyStep']),
-                              tickSize=float(entry['priceFilter']['tickSize']),
-                              makerFee=makerFeeRate,
-                              takerFee=takerFeeRate,
-                              pricePrecision=int(entry['priceScale']),
-                              quantityPrecision=5 if entry["quoteCoin"] == "USDT" else 0)  # hardcoded 5 digits FIXME!
+        fees_result = self.handle_result(lambda:self.pybit.get_fee_rates(category = self.category, symbol =symbol),context="get_fee_rates")
+        if fees_result is not None:
+            fees_list = fees_result.get("list", [])
+            if fees_list:
+                makerFeeRate = float(fees_list[0].get("makerFeeRate", 0.0))
+                takerFeeRate = float(fees_list[0].get("takerFeeRate", 0.0))
+            else:
+                self.logger.warning(f"get_fee_rates returned empty list for symbol {symbol}. Using 0 fees.")
+                makerFeeRate = 0.0
+                takerFeeRate = 0.0
+        else:
+            self.logger.error(f"get_fee_rates failed for symbol {symbol}. Using 0 fees.")
+            makerFeeRate = 0.0
+            takerFeeRate = 0.0
+        instr_result = self.handle_result(lambda: self.pybit.get_instruments_info(category=self.category,symbol=symbol),context="get_instruments_info")
+
+        if instr_result is None:
+            self.logger.error(f"get_instruments_info failed for symbol {symbol}.")
+            return None
+
+        for entry in instr_result.get("list", []):
+            if entry.get("symbol") == symbol:
+                return Symbol(
+                    symbol=entry['symbol'],
+                    baseCoin=self.baseCoin,
+                    isInverse=True if self.category == 'inverse' else False,
+                    lotSize=float(entry['lotSizeFilter']['qtyStep']),
+                    tickSize=float(entry['priceFilter']['tickSize']),
+                    makerFee=makerFeeRate,
+                    takerFee=takerFeeRate,
+                    pricePrecision=int(entry['priceScale']),
+                    quantityPrecision=5 if entry.get("quoteCoin") == "USDT" else 0  # FIXME: still hardcoded 5
+                )
+
+        self.logger.error(f"Instrument {symbol} not found in get_instruments_info response.")
         return None
 
     def get_ticker(self, symbol=None):
         if symbol is None:
             symbol = self.symbol
-        symbolData = self.handle_result(lambda:self.pybit.get_orderbook(category = self.category, symbol= symbol, limit = 1))
-        tickerData = self.handle_result(lambda: self.pybit.get_tickers(category=self.category, symbol=symbol))
-        lastPrice = float(tickerData['list'][0]['lastPrice'])
-        bid = float(symbolData['b'][0][0])
-        ask = float(symbolData['a'][0][0])
-        if bid is not None and ask is not None and lastPrice is not None:
-            return TickerData(bid=bid, ask=ask, last=lastPrice)
-        return None
+
+        symbolData_result = self.handle_result(lambda: self.pybit.get_orderbook(category=self.category,symbol=symbol,limit=1),context="get_orderbook(ticker)")
+
+        tickerData_result = self.handle_result(lambda: self.pybit.get_tickers(category=self.category,symbol=symbol),context="get_tickers")
+
+        if symbolData_result is None or tickerData_result is None:
+            self.logger.error("get_ticker failed because orderbook or ticker data is None.")
+            return None
+
+        # V5 /v5/market/orderbook: result is a dict with 'b' and 'a' arrays
+        try:
+            bid = float(symbolData_result["b"][0][0])
+            ask = float(symbolData_result["a"][0][0])
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            self.logger.error(f"Failed to parse bid/ask from orderbook: {e}, raw={symbolData_result!r}")
+            return None
+
+        # V5 /v5/market/tickers: result has 'list' with entries containing lastPrice
+        try:
+            lastPrice = float(tickerData_result["list"][0]["lastPrice"])
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            self.logger.error(f"Failed to parse lastPrice from ticker data: {e}, raw={tickerData_result!r}")
+            return None
+
+        return TickerData(bid=bid, ask=ask, last=lastPrice)
 
     # internal methods
 
@@ -396,42 +553,57 @@ class ByBitInterface(ExchangeWithWS):
                         self.orders[order.exchange_id] = prev
                         self.logger.info("order update: %s" % (str(order)))
                 elif topic == 'execution':
-                    #{'blockTradeId': '', 'category': 'inverse', 'execFee': '0.00000006',
-                    # 'execId': '4e995905-e9f5-51f1-bdf6-5c4d03a27b7d',
-                    # 'execPrice': '43022.00', 'execQty': '4', 'execTime': '1706556378218', 'execType': 'Trade',
-                    # 'execValue': '0.00009297', 'feeRate': '0.00055', 'indexPrice': '0.00', 'isLeverage': '',
-                    # 'isMaker': False, 'leavesQty': '0', 'markIv': '', 'markPrice': '43025.24',
-                    # 'orderId': 'f8cebf1d-128c-4352-862a-97338ce1b813',
-                    # 'orderLinkId': 'strategyOne+BTCUSD.f0a.504-LONG_ENTRY', 'orderPrice': '45172.50',
-                    # 'orderQty': '4', 'orderType': 'Market', 'symbol': 'BTCUSD', 'stopOrderType': 'UNKNOWN',
-                    # 'side': 'Buy', 'tradeIv': '', 'underlyingPrice': '', 'closedSize': '0',
-                    # 'seq': 34198439752, 'createType': 'CreateByUser'}
                     for execution in msgs:
                         if execution['symbol'] != self.symbol:
                             self.logger.info("INFO: order execution in:" + str(execution['symbol']))
                             continue
-                        #self.logger.info("execution msg arrived: %s" % (str(execution)))
-                        if execution['orderId'] in self.orders.keys():
-                            sideMulti = 1 if execution['side'] == "Buy" else -1
-                            order = self.orders[execution['orderId']]
-                            order.executed_amount = (float(execution['orderQty']) - float(execution['leavesQty'])) * sideMulti
-                            if (order.executed_amount - order.amount) * sideMulti >= 0:
-                                order.active = False
-                            self.on_execution_callback(order_id=order.id,
-                                                       executed_price= float(execution['execPrice']),
-                                                       amount=float(execution['execQty']) * sideMulti,
-                                                       tstamp=int(int(execution['execTime'])/1000))
-                                                       #tstamp= parse_utc_timestamp(execution['tradeTime']))
 
-                            self.logger.info("got order execution: %s %.4f @ %.4f " % (
-                                execution['orderLinkId'], float(execution['execQty']) * sideMulti,
-                                float(execution['execPrice'])))
+                        order = None
+
+                        # 1) First try exchange orderId (normal case)
+                        if execution['orderId'] in self.orders:
+                            order = self.orders[execution['orderId']]
                         else:
-                            '''self.initOrders()
-                            self.initPositions()
-                            self.logger.info("WARNING: could not find the executed order in database!")'''
-                            self.logger.info("orderID not known. Executed order ID: " + str(execution['orderId']) +
-                                             ", compared to own database: " + str(self.orders.keys()))
+                            # 2) Fallback: try to match by client order id (orderLinkId)
+                            link_id = execution.get('orderLinkId')
+                            if link_id:
+                                order = self.orders_by_link_id.get(link_id)
+                                if order is not None:
+                                    self.logger.info(
+                                        f"Matched execution via orderLinkId for unknown orderId: {execution['orderId']} / {link_id}"
+                                    )
+                                    # If we didn't know exchange_id yet, set it now
+                                    if not getattr(order, "exchange_id", None):
+                                        order.exchange_id = execution['orderId']
+                                    # And register in self.orders for future lookups
+                                    self.orders[order.exchange_id] = order
+
+                        if order is None:
+                            # Still unknown: log and skip
+                            self.logger.warning(
+                                "Execution for unknown order. orderId=%s, orderLinkId=%s, known orders=%s" %
+                                (execution.get('orderId'), execution.get('orderLinkId'), list(self.orders.keys()))
+                            )
+                            continue
+
+                        sideMulti = 1 if execution['side'] == "Buy" else -1
+                        order.executed_amount = (float(execution['orderQty']) - float(
+                            execution['leavesQty'])) * sideMulti
+                        if (order.executed_amount - order.amount) * sideMulti >= 0:
+                            order.active = False
+
+                        self.on_execution_callback(
+                            order_id=order.id,
+                            executed_price=float(execution['execPrice']),
+                            amount=float(execution['execQty']) * sideMulti,
+                            tstamp=int(int(execution['execTime']) / 1000),
+                        )
+
+                        self.logger.info(
+                            "got order execution: %s %.4f @ %.4f " %
+                            (execution['orderLinkId'], float(execution['execQty']) * sideMulti,
+                             float(execution['execPrice']))
+                        )
                 elif topic == 'position':
                     #print('position msg arrived:')
                     # {'bustPrice': '0.00', 'category': 'inverse', 'createdTime': '1627542388255',
@@ -543,60 +715,93 @@ class ByBitInterface(ExchangeWithWS):
         except Exception as e:
             self.logger.error("error in socket data (%s): %s " % (topic, str(e)))
 
-    def handle_result(self,call):
+    def handle_result(self, call, *, context: str = ""):
         try:
-            result= call()
-            if result is not None and 'result' in result.keys() and result['result'] is not None:
-                return result['result']
-            else:
-                self.logger.error(f"empty result: {result}")
-                self.on_api_error(f"problem in request: {str(call)}")
+            result = call()
+
+            if not isinstance(result, dict):
+                self.logger.error(f"Unexpected response type from Bybit ({context}): {result!r}")
+                if self.on_api_error:
+                    self.on_api_error(f"unexpected response type from Bybit ({context})")
                 return None
-        except pybit.exceptions.InvalidRequestError as e:#pybit.unified_trading.InvalidChannelTypeError.
-            self.logger.error(str(e))
-            self.on_api_error(f"problem in request: {e.message}")
+
+            ret_code = result.get("retCode")
+            ret_msg = result.get("retMsg")
+            if ret_code is not None and ret_code != 0:
+                self.logger.error(
+                    f"Bybit API error ({context}): retCode={ret_code}, retMsg={ret_msg}, raw={result!r}"
+                )
+                if self.on_api_error:
+                    self.on_api_error(f"Bybit API error ({context}): {ret_code} {ret_msg}")
+                return None
+
+            inner = result.get("result")
+            if inner is not None:
+                return inner
+
+            self.logger.warning(
+                f"Bybit returned retCode=0 but result=None ({context}). Raw={result!r}"
+            )
             return None
 
-    @staticmethod
-    def orderDictToOrder(o):
-        #print('translating order')
-        # {'orderId': 'c9cc56cb-164c-4978-811e-2d2e4ef6153a', 'orderLinkId': '', 'blockTradeId': '',
-        # 'symbol': 'BTCUSD', 'price': '0.00', 'qty': '10', 'side': 'Buy', 'isLeverage': '', 'positionIdx': 0,
-        # 'orderStatus': 'Untriggered', 'cancelType': 'UNKNOWN', 'rejectReason': 'EC_NoError', 'avgPrice': '0',
-        # 'leavesQty': '10', 'leavesValue': '0', 'cumExecQty': '0', 'cumExecValue': '0', 'cumExecFee': '0',
-        # 'timeInForce': 'IOC', 'orderType': 'Market', 'stopOrderType': 'StopLoss', 'orderIv': '',
-        # 'triggerPrice': '38000.00', 'takeProfit': '0.00', 'stopLoss': '0.00', 'tpTriggerBy': 'UNKNOWN',
-        # 'slTriggerBy': 'UNKNOWN', 'triggerDirection': 1, 'triggerBy': 'LastPrice',
-        # 'lastPriceOnCreated': '36972.00', 'reduceOnly': True, 'closeOnTrigger': True, 'smpType': 'None',
-        # 'smpGroup': 0, 'smpOrderId': '', 'tpslMode': 'Full', 'tpLimitPrice': '', 'slLimitPrice': '',
-        # 'placeType': '', 'createdTime': '1701099868909', 'updatedTime': '1701099868909'}
+        except (InvalidRequestError, FailedRequestError) as e:
+            self.logger.error(f"Bybit request failed ({context}): {e}")
+            if self.on_api_error:
+                self.on_api_error(f"Bybit request failed ({context}): {e}")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Unexpected API error ({context}): {repr(e)}")
+            if self.on_api_error:
+                self.on_api_error(f"unexpected error in request ({context}): {repr(e)}")
+            return None
+
+    def orderDictToOrder(self, o):
+        # side & size
         sideMulti = 1 if o["side"] == "Buy" else -1
-        ext = o['extFields'] if 'extFields' in o.keys() else None
-        stop = float(o['triggerPrice']) if 'triggerPrice' in o.keys() and len(o['triggerPrice'])>0 else None
-        if stop is None:
-            stop = o['stopPx'] if 'stopPx' in o.keys() else None
-        if stop is None and ext is not None and 'triggerPrice' in ext.keys() and len(ext['triggerPrice'])>0:
-            stop = ext['triggerPrice']
-        order = Order(orderId=o["orderLinkId"],
-                      trigger=float(stop) if stop is not None else None,
-                      limit=float(o["price"]) if o['orderType'] == 'Limit' else None,
-                      amount=float(o["qty"]) * sideMulti)
-        if "orderStatus" in o.keys():
-            order.stop_triggered = o["orderStatus"] == "New" and stop is not None
-            order.active = o['orderStatus'] in ['New', 'Untriggered' , "PartiallyFilled"]
-        elif "stopOrderStatus" in o.keys():
-            order.stop_triggered = o["stopOrderStatus"] == 'Triggered' or o['stopOrderStatus'] == 'Active'
-            order.active = o['stopOrderStatus'] in ['Triggered' , 'Untriggered' ]
-        execution = o['cumExecQty'] if 'cumExecQty' in o.keys() else 0
-        order.executed_amount = float(execution) * sideMulti
-        #order.tstamp = parse_utc_timestamp(o['updatedTime'] if 'updatedTime' in o.keys() else o['createdTime'])
-        #order.tstamp = int(int(o['updatedTime'] if 'updatedTime' in o.keys() else o['createdTime'])/1000)
-        order.tstamp = int(o['updatedTime'] if 'updatedTime' in o.keys() else o['createdTime'])/1000
-        order.exchange_id = o["orderId"] if 'orderId' in o.keys() else o['stopOrderId']
-        order.executed_price = None
-        if 'cumExecValue' in o.keys() and 'cumExecQty' in o.keys() \
-                and o['cumExecValue'] is not None and float(o['cumExecValue']) != 0:
-            order.executed_price = float(o['cumExecQty']) / float(o["cumExecValue"])  # cause of inverse
+
+        # trigger price (conditional orders)
+        stop = None
+        if "triggerPrice" in o and o["triggerPrice"]:
+            stop = float(o["triggerPrice"])
+
+        order = Order(
+            orderId=o.get("orderLinkId") or o["orderId"],
+            trigger=stop,
+            limit=float(o["price"]) if o.get("price") not in (None, "", "0", "0.0") else None,
+            amount=sideMulti * float(o["qty"]),
+        )
+
+        # status mapping (V5)
+        status = o.get("orderStatus", "")
+        order.active = status in ("New", "Untriggered", "PartiallyFilled")
+        order.stop_triggered = status in ("Triggered", "PartiallyFilled", "Filled")
+
+        # execution info
+        execution_qty = float(o.get("cumExecQty", 0.0))
+        order.executed_amount = execution_qty * sideMulti
+
+        # timestamps are ms in V5
+        t_raw = o.get("updatedTime") or o.get("createdTime")
+        if t_raw is not None:
+            order.tstamp = int(int(t_raw) / 1000)
+
+        # exchange id
+        order.exchange_id = o["orderId"]
+
+        # executed price
+        cum_value_str = o.get("cumExecValue")
+        if cum_value_str is not None and cum_value_str not in ("", "0", "0.0") and execution_qty != 0:
+            v = float(cum_value_str)
+            if self.category == "inverse":
+                # inverse: value ≈ qty / price  => price ≈ qty / value
+                order.executed_price = execution_qty / v
+            else:
+                # linear: value ≈ qty * price => price ≈ value / qty
+                order.executed_price = v / execution_qty
+        else:
+            order.executed_price = None
+
         return order
 
     @staticmethod
