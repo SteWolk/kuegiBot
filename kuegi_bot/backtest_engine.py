@@ -312,6 +312,7 @@ class BackTest(OrderInterface):
         exposure = abs(self.account.open_position.quantity) * (
             1 / self.current_bars[0].close if self.symbol.isInverse else self.current_bars[0].close)
         self.maxExposure = max(self.maxExposure, exposure)
+        # inside write_plot_data, after equity_vec append
         if self.account.equity < self.hh:
             self.underwater += 1
         else:
@@ -399,44 +400,79 @@ class BackTest(OrderInterface):
         if len(self.bot.position_history) > 0:
             daysInPos = 0
             maxDays = 0
-            minDays = self.bot.position_history[0].daysInPos() if len(self.bot.position_history) > 0 else 0
+            minDays = None
+            n_closed = 0
+
             for pos in self.bot.position_history:
                 if pos.status != PositionStatus.CLOSED:
                     continue
                 if pos.exit_tstamp is None:
-                    pos.exit_tstamp = self.bars[0].tstamp
-                daysInPos += pos.daysInPos()
-                maxDays = max(maxDays, pos.daysInPos())
-                minDays = min(minDays, pos.daysInPos())
-            daysInPos /= len(self.bot.position_history)
+                    pos.exit_tstamp = self.bars[-1].tstamp
 
-            profit = self.account.equity - self.initialEquity
-            uw_updates_per_day = 1440  # every minute
-            total_days = (self.bars[0].tstamp - self.bars[-1].tstamp) / (60 * 60 * 24)
-            #average_daily_return = profit / total_days
-            #rel = profit / (-self.maxDD_vec[-1] if profit > 0 else 0)
-            if -self.maxDD_vec[-1] != 0 and self.hh_vec[-1] != self.initialEquity:
-                rel = self.hh_vec[-1] / -self.maxDD_vec[-1]
+                d = pos.daysInPos()
+                daysInPos += d
+                maxDays = max(maxDays, d)
+                minDays = d if minDays is None else min(minDays, d)
+                n_closed += 1
+
+            if n_closed > 0:
+                daysInPos /= n_closed
             else:
-                rel = 0
-            rel_per_year = rel / (total_days / 365) if rel >0 else 0
+                daysInPos = 0
+                maxDays = 0
+                minDays = 0
+
             nmb = 0
             for position in self.bot.open_positions.values():
                 if position.status == PositionStatus.OPEN:
                     nmb += 1
-            #std_eq = statistics.stdev(self.equity_vec)
 
-            self.logger.info("trades: " + str(len(self.bot.position_history))
-                             + " | open pos: " + str(nmb)
-                             + " | profit: " + ("%.1f" % (100 * profit / self.initialEquity)) + "%"
-                             + " | unreal.: " + ("%.1f"% (100 * self.unrealized_equity_vec[-1] / self.initialEquity)) + "%"
-                             #+ " | HH: " + ("%.1f" % (100 * (self.hh_vec[-1] / self.initialEquity - 1))) + "%"
-                             + " | maxDD: " + ("%.1f" % (100 * self.maxDD_vec[-1] / self.initialEquity)) + "%"
-                             + " | maxExp: " + ("%.1f" % (self.maxExposure / self.initialEquity)) + "%"
-                             + " | rel: " + ("%.2f" % (rel_per_year))
-                             + " | UW days: " + ("%.1f" % (self.max_underwater / uw_updates_per_day))
-                             #+ " | pos days: " + ("%.1f/%.1f/%.1f" % (minDays, daysInPos, maxDays))
-                             )
+            # --- final equity and time span ---
+            final_equity = self.account.equity
+            profit = final_equity - self.initialEquity
+
+            first_ts = self.bars[0].tstamp
+            last_ts = self.bars[-1].tstamp
+            total_days = max(1e-9,abs(last_ts - first_ts) / (60 * 60 * 24))
+
+            # --- max drawdown magnitude (positive number) ---
+            max_dd = -self.maxDD_vec[-1]  # self.maxDD_vec values are negative
+
+            if max_dd > 0 and final_equity != self.initialEquity:
+                rel = final_equity / max_dd
+            else:
+                rel = 0.0
+
+            rel_per_year = rel / (total_days / 365) if rel > 0 and total_days > 0 else 0.0
+
+            # --- trade-count adjustment ---
+            n_closed = 0
+            for pos in self.bot.position_history:
+                if pos.status == PositionStatus.CLOSED:
+                    n_closed += 1
+
+            N0 = 100  # trades needed to get ~70% of full weight; tune as you like
+
+            if n_closed > 0:
+                trade_factor = math.sqrt(n_closed / (n_closed + N0))
+            else:
+                trade_factor = 0.0
+
+            rel_per_year_trades = rel_per_year * trade_factor
+
+            self.logger.info(
+                "trades: " + str(n_closed)
+                + " | open pos: " + str(nmb)
+                + " | profit: " + ("%.1f" % (100 * profit / self.initialEquity)) + "%"
+                + " | unreal.: " + ("%.1f" % (100 * self.unrealized_equity_vec[-1] / self.initialEquity)) + "%"
+                + " | maxDD: " + ("%.1f" % (100 * self.maxDD_vec[-1] / self.initialEquity)) + "%"
+                + " | maxExp: " + ("%.1f" % (self.maxExposure / self.initialEquity)) + "%"
+                + " | relY_final: " + ("%.2f" % (rel_per_year))
+                + " | relY_final_trades: " + ("%.2f" % (rel_per_year_trades))
+                # + " | UW days: " + ...
+            )
+
+
         else:
             self.logger.info("finished with no trades")
 
