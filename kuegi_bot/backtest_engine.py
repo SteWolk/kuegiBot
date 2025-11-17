@@ -3,6 +3,7 @@ import math
 #import statistics
 import os
 import csv
+import json
 
 import plotly.graph_objects as go
 
@@ -460,6 +461,90 @@ class BackTest(OrderInterface):
 
             rel_per_year_trades = rel_per_year * trade_factor
 
+            # --- CAGR (annualized return) ---
+            years = total_days / 365.0
+            if years > 0 and self.initialEquity > 0 and final_equity > 0:
+                cagr = (final_equity / self.initialEquity) ** (1.0 / years) - 1.0
+            else:
+                cagr = 0.0
+
+            # --- MAR / Calmar ratio: CAGR / max drawdown (fraction) ---
+            if self.initialEquity > 0:
+                max_dd_frac = max_dd / self.initialEquity
+            else:
+                max_dd_frac = 0.0
+
+            if max_dd_frac > 0 and cagr > 0:
+                mar_ratio = cagr / max_dd_frac
+            else:
+                mar_ratio = 0.0
+
+            # --- Trade-based stats (R-multiples on price) ---
+            trade_R = []
+            wins = 0
+            losses = 0
+            win_sum = 0.0
+            loss_sum = 0.0
+
+            for pos in self.bot.position_history:
+                if pos.status != PositionStatus.CLOSED:
+                    continue
+                if pos.filled_entry is None or pos.filled_exit is None:
+                    continue
+                if pos.max_filled_amount == 0:
+                    continue
+
+                entry = pos.filled_entry
+                exit_ = pos.filled_exit
+
+                # Long vs short R on price
+                if pos.max_filled_amount > 0:
+                    r = (exit_ - entry) / entry
+                else:
+                    r = (entry - exit_) / entry
+
+                trade_R.append(r)
+                if r > 0:
+                    wins += 1
+                    win_sum += r
+                elif r < 0:
+                    losses += 1
+                    loss_sum += r
+
+            if len(trade_R) >= 2:
+                mean_R = sum(trade_R) / len(trade_R)
+                var_R = sum((r - mean_R) ** 2 for r in trade_R) / (len(trade_R) - 1)
+                std_R = math.sqrt(var_R) if var_R > 0 else 0.0
+            elif len(trade_R) == 1:
+                mean_R = trade_R[0]
+                std_R = 0.0
+            else:
+                mean_R = 0.0
+                std_R = 0.0
+
+            if len(trade_R) > 0:
+                win_rate = wins / len(trade_R)
+            else:
+                win_rate = 0.0
+
+            if wins > 0:
+                avg_win_R = win_sum / wins
+            else:
+                avg_win_R = 0.0
+
+            if losses > 0:
+                avg_loss_R = loss_sum / losses  # this is negative
+                profit_factor = -win_sum / loss_sum if loss_sum < 0 else 0.0
+            else:
+                avg_loss_R = 0.0
+                profit_factor = float('inf') if wins > 0 else 0.0
+
+            # --- SQN-like metric: Sharpe-style but on trades, not time ---
+            if std_R > 0 and len(trade_R) > 1:
+                sqn = (mean_R / std_R) * math.sqrt(len(trade_R))
+            else:
+                sqn = 0.0
+
             self.logger.info(
                 "trades: " + str(n_closed)
                 + " | open pos: " + str(nmb)
@@ -469,13 +554,41 @@ class BackTest(OrderInterface):
                 + " | maxExp: " + ("%.1f" % (self.maxExposure / self.initialEquity)) + "%"
                 + " | relY_final: " + ("%.2f" % (rel_per_year))
                 + " | relY_final_trades: " + ("%.2f" % (rel_per_year_trades))
-                # + " | UW days: " + ...
+                + " | CAGR: " + ("%.2f" % (100 * cagr)) + "%"
+                + " | MAR: " + ("%.2f" % (mar_ratio))
+                + " | winrate: " + ("%.1f" % (100 * win_rate)) + "%"
+                + " | avgR: " + ("%.3f" % (mean_R))
+                + " | PF: " + ("%.2f" % (profit_factor if profit_factor != float('inf') else 0.0))
+                + " | SQN_trades: " + ("%.2f" % (sqn))
             )
 
-
+            # --- store metrics on the BackTest instance for later export ---
+            self.metrics = {
+                "symbol": getattr(self.symbol, "symbol", None) if hasattr(self, "symbol") else None,
+                "timeframe_minutes": None,  # you can fill this from your BackTest init if you store it
+                "trades_closed": n_closed,
+                "open_positions": nmb,
+                "initial_equity": self.initialEquity,
+                "final_equity": final_equity,
+                "profit_abs": profit,
+                "profit_pct": 100.0 * profit / self.initialEquity if self.initialEquity > 0 else 0.0,
+                "max_drawdown_abs": max_dd,
+                "max_drawdown_pct": 100.0 * self.maxDD_vec[-1] / self.initialEquity if self.initialEquity > 0 else 0.0,
+                "max_exposure_abs": self.maxExposure,
+                "max_exposure_pct": 100.0 * self.maxExposure / self.initialEquity if self.initialEquity > 0 else 0.0,
+                "total_days": total_days,
+                "relY_final": rel_per_year,
+                "relY_final_trades": rel_per_year_trades,
+                "cagr": cagr,
+                "mar": mar_ratio,
+                "winrate": win_rate,
+                "avg_R": mean_R,
+                "profit_factor": profit_factor,
+                "sqn_trades": sqn,
+            }
         else:
             self.logger.info("finished with no trades")
-
+            self.metrics = None  # no trades, nothing to export
         return self
 
     def plot_equity_stats(self):
@@ -608,3 +721,31 @@ class BackTest(OrderInterface):
                     self.bars[0].close,
                     position.exit_equity
                 ])
+
+def export_backtest_metrics_to_csv(bt, filepath, append=True):
+    """
+    Write bt.metrics to CSV. If append=True and file exists, append a row.
+    If file does not exist, write header + row.
+    """
+    if not getattr(bt, "metrics", None):
+        raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
+
+    metrics = bt.metrics
+    file_exists = os.path.isfile(filepath)
+
+    mode = "a" if append and file_exists else "w"
+    with open(filepath, mode, newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(metrics.keys()))
+        if not file_exists or not append:
+            writer.writeheader()
+        writer.writerow(metrics)
+
+def export_backtest_metrics_to_json(bt, filepath):
+    """
+    Write bt.metrics to JSON (one object).
+    """
+    if not getattr(bt, "metrics", None):
+        raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
+
+    with open(filepath, "w") as f:
+        json.dump(bt.metrics, f, indent=2)
