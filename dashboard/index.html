@@ -1,251 +1,432 @@
 <html>
-
 <head>
     <title>Cryptobot Dashboard</title>
     <script src="libs/vue.global.js"></script>
     <link href="libs/tailwind.min.css" rel="stylesheet">
 </head>
 
-<body>
-    <div id="kuegibot">
-        <div class="bg-gray-800 pb-32">
-            <header class="py-10 px-8 flex space-x-4">
-                <h1 class="text-3xl font-bold text-white">
-                    Dashboard
-                </h1>
-                <button @click="loadDashboardData" class="bg-yellow-300 hover:bg-yellow-400 text-gray-800 font-bold py-2 px-4 rounded inline-flex items-center">
-                    <span>Refresh</span>
-                    <svg class="w-4 h-4 ml-2" :class="classForLoading" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                </button>
-            </header>
-        </div>
+<body class="bg-gray-900">
+<div id="kuegibot">
+    <div class="bg-gray-800 pb-10 min-h-screen text-gray-900">
+        <!-- Header -->
+        <header class="py-6 px-8 flex flex-wrap items-center gap-4">
+            <h1 class="text-3xl font-bold text-white">
+                Cryptobot Dashboard
+            </h1>
+            <button
+                @click="loadDashboardData"
+                class="bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-2 px-4 rounded inline-flex items-center"
+            >
+                <svg
+                    class="w-5 h-5 mr-2"
+                    :class="classForLoading"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                >
+                    <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                    ></circle>
+                    <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"
+                    ></path>
+                </svg>
+                <span>Reload</span>
+            </button>
+            <span class="text-sm text-gray-300" v-if="dashboard.bots.length > 0">
+                Last update:
+                <span class="font-mono">
+                    {{ formatTime(latestTick) }}
+                </span>
+            </span>
+        </header>
 
-        <main class="-mt-32">
-            <div class="mx-auto pb-12 px-4">
-                <div class="bg-white rounded-lg shadow px-3 py-4">
-                    <div class="rounded-lg">
-                        <template v-if="viewInitialized">
-                            <div class="flex flex-col">
-                                <div class="overflow-x-auto">
-                                    <table class="min-w-full divide-y divide-gray-400">
-                                        <thead class="bg-gray-50">
-                                            <tr>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Bot/Position Id</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Status</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Signal time</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Size (current/total)</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Target entry</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Initial SL</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Entry time</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Filled entry</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Current SL</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Worst case (R)</th>
-                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-900 uppercase tracking-wider" scope="col">Initial risk</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <template v-for="bot in dashboard.bots" :key="bot.id">                                           
-                                                <tr class="font-bold">
-                                                    <td class="p-1 pt-3 border-b border-gray-600">{{ bot.id }}</td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">Account</td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        {{ formatTime(bot.last_tick_tstamp) }}
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        Net size: {{ bot.totalPos }}
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        Equity: {{ bot.equity }}
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        Max equity: {{ bot.max_equity }}
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        Drawdown: {{ bot.drawdown }} ({{ bot.uwdays }} d)
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600"></td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600"></td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        Total risk: {{ formatResult(bot.totalWorstCase) }}
-                                                    </td>
-                                                    <td class="p-1 pt-3 border-b border-gray-600">
-                                                        R size: {{ bot.risk_reference }}
-                                                    </td>
-                                                </tr>
-                                                <template v-for="position in bot.positions" :key="position.id">
-                                                    <tr class="divide-x divide-gray-400" :class="classFromPosition(position)"> 
-                                                        <td class="p-1 border-b border-gray-400">{{ position.id }}</td>
-                                                        <td class="p-1 border-b text-center uppercase">{{ position.status }}</td>
-                                                        <td class="p-1 border-b">{{ formatTime(position.signal_tstamp) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.current_open_amount) }}/{{ formatPrice(position.amount) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.wanted_entry) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.initial_stop) }}</td>
-                                                        <td class="p-1 border-b">{{ formatTime(position.entry_tstamp) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.filled_entry) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.currentStop) }}</td>
-                                                        <td class="p-1 border-b" :class="classFromResult(position.worstCase)">{{ formatResult(position.worstCase) }}</td>
-                                                        <td class="p-1 border-b">{{ formatPrice(position.initialRisk) }}</td>
-                                                    </tr>
-                                                </template>
-                                            </template>
-                                        </tbody>    
-                                    </table>
-                                    <p class="mt-4 text-xs text-gray-600">
-                                        <strong>Worst-case (R)</strong> is the unrealized loss in units of <strong>R size</strong> if all stops are hit.
-                                        <strong>R size</strong> is the risk per full-R loss used for position sizing.
-                                    </p>
+        <!-- Main content -->
+        <main class="px-4 sm:px-8">
+            <div class="bg-white shadow rounded-lg p-4 sm:p-6">
+                <h2 class="text-xl font-semibold mb-4">
+                    Open positions
+                </h2>
+
+                <div v-if="!viewInitialized && dashboard.isLoading" class="text-gray-600 text-sm">
+                    Loading dashboard data...
+                </div>
+                <div v-else-if="viewInitialized && dashboard.bots.length === 0" class="text-gray-600 text-sm">
+                    No data available.
+                </div>
+
+                <div v-if="viewInitialized && dashboard.bots.length > 0" class="flex flex-col">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-300">
+                            <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-2 py-2 text-left text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Position ID
+                                </th>
+                                <th class="px-2 py-2 text-center text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Status
+                                </th>
+                                <th class="px-2 py-2 text-left text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Signal time
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Size (open/total)
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Target entry
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Initial SL
+                                </th>
+                                <th class="px-2 py-2 text-left text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Entry time
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Filled entry
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Current SL
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Worst-case (R)
+                                </th>
+                                <th class="px-2 py-2 text-right text-xs font-medium text-gray-900 uppercase tracking-wider"
+                                    scope="col">
+                                    Initial risk
+                                </th>
+                            </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                            <template v-for="bot in dashboard.bots" :key="bot.id">
+                                <template v-for="position in bot.positions" :key="position.id">
+                                    <tr :class="classFromPosition(position)">
+                                        <td class="px-2 py-1 whitespace-nowrap text-sm font-mono">
+                                            {{ position.id }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-center uppercase">
+                                            {{ position.status }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs">
+                                            {{ formatTime(position.signal_tstamp) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.current_open_amount) }}/{{ formatPrice(position.amount) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.wanted_entry) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.initial_stop) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs">
+                                            {{ formatTime(position.entry_tstamp) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.filled_entry) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.currentStop) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right"
+                                            :class="classFromWorstCase(position.worstCase)">
+                                            {{ formatResult(position.worstCase) }}
+                                        </td>
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                            {{ formatPrice(position.initialRisk) }}
+                                        </td>
+                                    </tr>
+                                </template>
+                            </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Bot summaries below the table -->
+                    <div class="mt-6 space-y-4">
+                        <div
+                            v-for="bot in dashboard.bots"
+                            :key="bot.id"
+                            class="border rounded-lg p-4 bg-gray-50"
+                        >
+                            <h2 class="text-lg font-semibold mb-1">
+                                {{ bot.id }}
+                            </h2>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-sm">
+                                <div>
+                                    <span class="font-medium">Last tick:</span>
+                                    <span class="font-mono ml-1">{{ formatTime(bot.last_tick_tstamp) }}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Net position:</span>
+                                    <span class="ml-1">{{ formatPrice(bot.totalPos) }}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Equity (total):</span>
+                                    <span class="ml-1">{{ formatPrice(bot.equity) }}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Equity (max):</span>
+                                    <span class="ml-1">{{ formatPrice(bot.max_equity) }}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Realized equity:</span>
+                                    <span class="ml-1">
+                                        <template v-if="bot.realized_equity_calc !== null">
+                                            {{ formatPrice(bot.realized_equity_calc) }}
+                                        </template>
+                                        <template v-else>
+                                            -
+                                        </template>
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Unrealized equity:</span>
+                                    <span class="ml-1">
+                                        <template v-if="bot.unrealized_equity_calc !== null">
+                                            {{ formatPrice(bot.unrealized_equity_calc) }}
+                                        </template>
+                                        <template v-else>
+                                            -
+                                        </template>
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Drawdown:</span>
+                                    <span class="ml-1">{{ bot.drawdown }}</span>
+                                    <span class="ml-1 text-xs text-gray-500">
+                                        ({{ bot.uwdays }} d since max)
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Total risk (worst-case):</span>
+                                    <span class="ml-1">
+                                        {{ formatResult(bot.totalWorstCase) }}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">R size:</span>
+                                    <span class="ml-1">{{ bot.risk_reference }}</span>
                                 </div>
                             </div>
-                        </template>
+                        </div>
                     </div>
+
+                    <!-- Legend -->
+                    <p class="mt-6 text-xs text-gray-600 leading-snug">
+                        <strong>Worst-case (R)</strong> is the loss in units of
+                        <strong>R size</strong> if all stops are hit at their current levels.
+                        <strong>R size</strong> is the base risk unit used for position sizing.
+                        <strong>Realized equity</strong> is the equity excluding open PnL (if provided by the backend),
+                        and <strong>unrealized equity</strong> is the open PnL component.
+                    </p>
                 </div>
             </div>
         </main>
     </div>
+</div>
 
-
-    <script>
-        const Dashboard = {
-            data() {
+<script>
+    const Dashboard = {
+        data() {
+            return {
+                viewInitialized: false,
+                dashboard: {
+                    isLoading: false,
+                    bots: []
+                }
+            }
+        },
+        computed: {
+            classForLoading() {
                 return {
-                    view: 'dashboard',
-                    viewInitialized: false,
-                    dashboard: {
-                        isLoading: true,
-                        bots: [ ],
-                    }
+                    'animate-spin': this.dashboard.isLoading
                 }
             },
-            computed: {
-                classForLoading() {
-                    return {
-                        'animate-spin': this.dashboard.isLoading
-                    }
-                },
-            },
-            mounted() {
-                this.viewInitialized = true
-                this.loadDashboardData()
-                
-                // autorefresh every 5 seconds
-                setInterval(() => {
-                    this.loadDashboardData()
-                }, 5000)
-
-                // reload by pressing the "r" key
-                document.onkeypress = (evt) => {
-                    evt = evt || window.event;
-                    let charCode = evt.keyCode || evt.which;
-                    let charStr = String.fromCharCode(charCode);
-                    if(charStr === 'r') {
-                        this.loadDashboardData()
-                    }
+            latestTick() {
+                if (!this.dashboard.bots || this.dashboard.bots.length === 0) {
+                    return null
                 }
-            },
-            methods: {
-                loadDashboardData() {
-                    this.dashboard.isLoading = true
-                    window.fetch('dashboard.json?v=' + Date.now())
+                let maxTs = null
+                this.dashboard.bots.forEach(bot => {
+                    if (typeof bot.last_tick_tstamp === 'number') {
+                        if (maxTs === null || bot.last_tick_tstamp > maxTs) {
+                            maxTs = bot.last_tick_tstamp
+                        }
+                    }
+                })
+                return maxTs
+            }
+        },
+        methods: {
+            loadDashboardData() {
+                this.dashboard.isLoading = true
+                window.fetch('dashboard.json?v=' + Date.now())
                     .then(response => response.json())
                     .then(data => {
                         this.dashboard.bots = this.prepareBotsForDashboard(data)
                         this.dashboard.isLoading = false
+                        this.viewInitialized = true
                     })
-                },
-                prepareBotsForDashboard(data) {
-                    let bots = []
+                    .catch(() => {
+                        this.dashboard.isLoading = false
+                        this.viewInitialized = true
+                    })
+            },
+            prepareBotsForDashboard(data) {
+                let bots = []
 
-                    Object.keys(data).forEach(id => {
-                        let bot = data[id]
-                        bot.id = id
-                        bot.drawdown = ((bot.max_equity - bot.equity) / bot.risk_reference).toFixed(1) + "R"
-                        bot.uwdays = ((Date.now()-bot.time_of_max_equity*1000)/(1000*60*60*24)).toFixed(0)
-                        bot.equity = this.formatPrice(bot.equity)
-                        bot.max_equity = this.formatPrice(bot.max_equity)
-                        let totalPos = 0
-                        let totalWorstCase = 0
+                Object.keys(data).forEach(id => {
+                    let raw = data[id]
+                    let bot = Object.assign({}, raw)
+                    bot.id = id
 
-                        bot.positions.forEach((position) => {
-                            position.connectedOrders.forEach((order) => {
-                                if(order.id.includes('_SL_')) {
-                                    position.currentStop = order.trigger_price
-                                    if(Math.abs(position.amount) > 100) {
-                                        position.worstCase = (1 / position.currentStop - 1 / position.filled_entry) / (1 / position.wanted_entry - 1 / position.initial_stop)
-                                    } else {
-                                        position.worstCase = (position.currentStop - position.filled_entry) / (position.wanted_entry - position.initial_stop)
-                                    }
-                                }
+                    // Drawdown in R
+                    if (typeof bot.max_equity === 'number'
+                        && typeof bot.equity === 'number'
+                        && typeof bot.risk_reference === 'number'
+                        && bot.risk_reference !== 0) {
+                        const ddR = (bot.max_equity - bot.equity) / bot.risk_reference
+                        bot.drawdown = ddR.toFixed(1) + 'R'
+                    } else {
+                        bot.drawdown = '-'
+                    }
 
-                                if(Math.abs(position.amount) > 100) {
-                                    position.initialRisk = position.amount / position.initial_stop - position.amount / position.wanted_entry
-                                } else {
-                                    position.initialRisk = position.amount * (position.wanted_entry - position.initial_stop)
-                                }
-                            })
+                    // Days since max equity
+                    if (typeof bot.time_of_max_equity === 'number' && bot.time_of_max_equity > 0) {
+                        const days = (Date.now() - bot.time_of_max_equity * 1000) / (1000 * 60 * 60 * 24)
+                        bot.uwdays = days.toFixed(0)
+                    } else {
+                        bot.uwdays = '-'
+                    }
 
-                            if(position.status == 'open') {
-                                totalPos += position.current_open_amount
-                                totalWorstCase += position.initialRisk * position.worstCase
+                    // Realized vs unrealized equity, if backend provides the fields
+                    let realizedEquity = null
+                    if (typeof bot.realized_equity === 'number') {
+                        realizedEquity = bot.realized_equity
+                    } else if (typeof bot.wallet_balance === 'number') {
+                        realizedEquity = bot.wallet_balance
+                    }
+
+                    if (typeof bot.equity === 'number' && realizedEquity !== null) {
+                        bot.realized_equity_calc = realizedEquity
+                        bot.unrealized_equity_calc = bot.equity - realizedEquity
+                    } else {
+                        bot.realized_equity_calc = null
+                        bot.unrealized_equity_calc = null
+                    }
+
+                    // Aggregate over positions
+                    let totalPos = 0
+                    let totalWorstCase = 0
+
+                    if (Array.isArray(bot.positions)) {
+                        bot.positions.forEach(pos => {
+                            if (typeof pos.amount === 'number') {
+                                totalPos += pos.amount
+                            }
+                            if (typeof pos.worstCase === 'number') {
+                                totalWorstCase += pos.worstCase
+                            }
+
+                            if (typeof pos.current_open_amount !== 'number') {
+                                pos.current_open_amount = pos.amount || 0
                             }
                         })
+                    } else {
+                        bot.positions = []
+                    }
 
-                        bot.totalWorstCase = (totalWorstCase/bot.risk_reference)
-                        bot.totalPos = this.formatPrice(totalPos)
-                        bots.push(bot)
-                    })
+                    bot.totalPos = totalPos
+                    bot.totalWorstCase = totalWorstCase
 
-                    return bots
-                },
-                classFromPosition(aPosition) {
-                    return {
-                        'bg-green-500': aPosition.status === 'open' && aPosition.amount > 0, // openLong
-                        'bg-red-500': aPosition.status === 'open' && aPosition.amount <= 0, // openShort
-                        'bg-green-200': aPosition.status === 'pending' && aPosition.amount > 0, // pendingLong
-                        'bg-red-200': aPosition.status === 'pending' && aPosition.amount <= 0, // pendingShort
-                    }
-                },
-                classFromResult(worstCase) {
-                    return {
-                        'bg-green-500': worstCase > 0, // winning
-                        'bg-red-500': worstCase < 0, // losing
-                        'bg-gray-300': typeof worstCase !== 'number', // losing
-                    }
-                },
-                formatPrice(aPrice) {
-                    if(typeof aPrice !== 'number') {
-                        return ''
-                    }
-                    if(Math.abs(aPrice) < 1) return aPrice.toFixed(4)
-                    if(Math.abs(aPrice) < 10) return aPrice.toFixed(3)
-                    if(Math.abs(aPrice) < 100) return aPrice.toFixed(2)
-                    if(Math.abs(aPrice) < 1000) return aPrice.toFixed(1)
-                    return aPrice.toFixed(0)
-                },
-                formatTime(aTime) {
-                    if (typeof aTime === 'number' && aTime > 100000) {
-                        let date = new Date()
-                        date.setTime(aTime * 1000)
-                        return date.toLocaleString()
-                    } 
+                    bots.push(bot)
+                })
+
+                return bots
+            },
+            formatPrice(aPrice) {
+                if (typeof aPrice === 'number') {
+                    const abs = Math.abs(aPrice)
+                    const digits = abs < 10 ? 3 : (abs < 100 ? 2 : 1)
+                    return aPrice.toFixed(digits)
+                } else {
                     return ''
-                },
-                formatResult(aResult) {
-                    if(typeof aResult === 'number') {
-                        let result = ''
-                        if (aResult > 0) {
-                            result = '+'
-                        }
-                        return result + aResult.toFixed(1) + 'R'
-                    } else
-                        return '-'
+                }
+            },
+            formatTime(aTime) {
+                if (typeof aTime === 'number' && aTime > 100000) {
+                    const date = new Date(aTime * 1000)
+                    const y = date.getFullYear()
+                    const m = String(date.getMonth() + 1).padStart(2, '0')
+                    const d = String(date.getDate()).padStart(2, '0')
+                    const hh = String(date.getHours()).padStart(2, '0')
+                    const mm = String(date.getMinutes()).padStart(2, '0')
+                    return `${y}-${m}-${d} ${hh}:${mm}`
+                } else {
+                    return ''
+                }
+            },
+            classFromPosition(position) {
+                const cls = ['text-xs']
+                if (typeof position.amount === 'number') {
+                    if (position.amount > 0) {
+                        cls.push('bg-green-50')
+                    } else if (position.amount < 0) {
+                        cls.push('bg-red-50')
+                    }
+                }
+                if (position.status && String(position.status).toLowerCase() !== 'open') {
+                    cls.push('opacity-60')
+                }
+                return cls.join(' ')
+            },
+            classFromWorstCase(worstCase) {
+                if (typeof worstCase !== 'number') {
+                    return ''
+                }
+                if (worstCase <= -1) {
+                    return 'text-red-600 font-semibold'
+                }
+                if (worstCase >= 1) {
+                    return 'text-green-600 font-semibold'
+                }
+                return 'text-gray-800'
+            },
+            formatResult(aResult) {
+                if (typeof aResult === 'number') {
+                    let sign = ''
+                    if (aResult > 0) {
+                        sign = '+'
+                    }
+                    return sign + aResult.toFixed(1) + 'R'
+                } else {
+                    return '-'
                 }
             }
+        },
+        mounted() {
+            this.loadDashboardData()
         }
+    }
 
-        Vue.createApp(Dashboard).mount('#kuegibot')
-    </script>
+    Vue.createApp(Dashboard).mount('#kuegibot')
+</script>
 </body>
-
 </html>
