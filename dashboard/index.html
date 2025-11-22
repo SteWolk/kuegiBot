@@ -316,7 +316,7 @@
                         bot.uwdays = '-'
                     }
 
-                    // Realized vs unrealized equity, if backend provides the fields
+                    // Realized vs unrealized equity, if backend provides fields
                     let realizedEquity = null
                     if (typeof bot.realized_equity === 'number') {
                         realizedEquity = bot.realized_equity
@@ -332,21 +332,72 @@
                         bot.unrealized_equity_calc = null
                     }
 
-                    // Aggregate over positions
+                    // Aggregate over positions, compute currentStop, worstCase, initialRisk
                     let totalPos = 0
                     let totalWorstCase = 0
 
                     if (Array.isArray(bot.positions)) {
                         bot.positions.forEach(pos => {
-                            if (typeof pos.amount === 'number') {
-                                totalPos += pos.amount
-                            }
-                            if (typeof pos.worstCase === 'number') {
-                                totalWorstCase += pos.worstCase
+                            // Default for current_open_amount
+                            if (typeof pos.current_open_amount !== 'number') {
+                                pos.current_open_amount = typeof pos.amount === 'number' ? pos.amount : 0
                             }
 
-                            if (typeof pos.current_open_amount !== 'number') {
-                                pos.current_open_amount = pos.amount || 0
+                            // Derive currentStop from connectedOrders, like in old main.js
+                            let currentStop = typeof pos.currentStop === 'number' ? pos.currentStop : null
+                            if (Array.isArray(pos.connectedOrders)) {
+                                pos.connectedOrders.forEach(order => {
+                                    if (order && order.id && order.id.includes("_SL_")
+                                        && typeof order.trigger_price === 'number') {
+                                        currentStop = order.trigger_price
+                                    }
+                                })
+                            }
+                            if (typeof currentStop === 'number') {
+                                pos.currentStop = currentStop
+                            }
+
+                            // Compute worstCase if we have the necessary fields
+                            if (typeof pos.currentStop === 'number'
+                                && typeof pos.filled_entry === 'number'
+                                && typeof pos.wanted_entry === 'number'
+                                && typeof pos.initial_stop === 'number'
+                                && typeof pos.amount === 'number'
+                                && pos.wanted_entry !== pos.initial_stop) {
+
+                                if (Math.abs(pos.amount) > 10) {
+                                    // Inverse / size-scaled variant
+                                    pos.worstCase =
+                                        (1 / pos.currentStop - 1 / pos.filled_entry) /
+                                        (1 / pos.wanted_entry - 1 / pos.initial_stop)
+                                } else {
+                                    pos.worstCase =
+                                        (pos.currentStop - pos.filled_entry) /
+                                        (pos.wanted_entry - pos.initial_stop)
+                                }
+                            }
+
+                            // Compute initialRisk
+                            if (typeof pos.amount === 'number'
+                                && typeof pos.wanted_entry === 'number'
+                                && typeof pos.initial_stop === 'number') {
+
+                                if (Math.abs(pos.amount) > 10) {
+                                    pos.initialRisk =
+                                        pos.amount / pos.initial_stop - pos.amount / pos.wanted_entry
+                                } else {
+                                    pos.initialRisk =
+                                        pos.amount * (pos.wanted_entry - pos.initial_stop)
+                                }
+                            }
+
+                            // Aggregate totals for open positions
+                            if (pos.status === "open"
+                                && typeof pos.amount === 'number'
+                                && typeof pos.initialRisk === 'number'
+                                && typeof pos.worstCase === 'number') {
+                                totalPos += pos.amount
+                                totalWorstCase += pos.initialRisk * pos.worstCase
                             }
                         })
                     } else {
@@ -354,7 +405,11 @@
                     }
 
                     bot.totalPos = totalPos
-                    bot.totalWorstCase = totalWorstCase
+                    if (typeof bot.risk_reference === 'number' && bot.risk_reference !== 0) {
+                        bot.totalWorstCase = totalWorstCase / bot.risk_reference
+                    } else {
+                        bot.totalWorstCase = 0
+                    }
 
                     bots.push(bot)
                 })
@@ -387,9 +442,9 @@
                 const cls = ['text-xs']
                 if (typeof position.amount === 'number') {
                     if (position.amount > 0) {
-                        cls.push('bg-green-50')
+                        cls.push('bg-green-200')
                     } else if (position.amount < 0) {
-                        cls.push('bg-red-50')
+                        cls.push('bg-red-200')
                     }
                 }
                 if (position.status && String(position.status).toLowerCase() !== 'open') {
