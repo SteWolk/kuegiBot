@@ -327,6 +327,10 @@ class TrendStrategy(StrategyWithTradeManagement):
         is_new_bar = False
         if bars[0].open == bars[0].close:
             is_new_bar = True
+            self.logger.info(
+                f"[TrendStrategy] is_new_bar=True at t={bars[0].tstamp}, "
+                f"open={bars[0].open}, close={bars[0].close}"
+            )
 
         if is_new_bar:
             # Update SLs based on BBs
