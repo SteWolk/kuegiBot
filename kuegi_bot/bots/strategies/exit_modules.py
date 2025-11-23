@@ -193,47 +193,38 @@ class TimedExit(ExitModule):
         #self.logger.info(f"init timedExit with {self.longs_min_to_exit}, {self.atrPeriod}")
 
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
-        if bars[0].open == bars[0].close:
-            is_new_bar = True
-            self.logger.info(
-                f"[ATRrangeSL] is_new_bar=True at t={bars[0].tstamp}, "
-                f"open={bars[0].open}, close={bars[0].close}"
-            )
+        if bars[0].open == bars[0].close: # new candle
+            current_tstamp = bars[0].last_tick_tstamp if bars[0].last_tick_tstamp is not None else bars[0].tstamp
+            if current_tstamp > position.entry_tstamp + self.longs_min_to_exit*60:
+                if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
+                    if bars[0].close < position.wanted_entry:
+                        order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
+                        to_update.append(order)
 
-        # Run on every tick; the time checks themselves ensure it only fires
-        # once thresholds like shorts_min_to_exit / shorts_min_to_breakeven are reached.
-        current_tstamp = bars[0].last_tick_tstamp if bars[0].last_tick_tstamp is not None else bars[0].tstamp
+            if current_tstamp > position.entry_tstamp + self.longs_min_to_breakeven*60:
+                if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
+                    if bars[0].close > position.wanted_entry:
+                        order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
+                        to_update.append(order)
 
-        if current_tstamp > position.entry_tstamp + self.longs_min_to_exit * 60:
-            if position.amount > 0 and order.trigger_price < position.wanted_entry:  # longs
-                if bars[0].close < position.wanted_entry:
-                    order.trigger_price = position.wanted_entry
-                    self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
-                    to_update.append(order)
+            if current_tstamp > position.entry_tstamp + self.shorts_min_to_exit * 60:
+                if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
+                    if bars[0].close > position.wanted_entry:
+                        order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
+                        to_update.append(order)
 
-        if current_tstamp > position.entry_tstamp + self.longs_min_to_breakeven * 60:
-            if position.amount > 0 and order.trigger_price < position.wanted_entry:  # longs
-                if bars[0].close > position.wanted_entry:
-                    order.trigger_price = position.wanted_entry
-                    self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
-                    to_update.append(order)
+            if current_tstamp > position.entry_tstamp + self.shorts_min_to_breakeven*60:
+                if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
+                    if bars[0].open < position.wanted_entry:
+                        order.trigger_price = position.wanted_entry
+                        self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
+                        to_update.append(order)
 
-        if current_tstamp > position.entry_tstamp + self.shorts_min_to_exit * 60:
-            if position.amount < 0 and order.trigger_price > position.wanted_entry:  # shorts
-                if bars[0].close > position.wanted_entry:
-                    order.trigger_price = position.wanted_entry
-                    self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
-                    to_update.append(order)
-
-        if current_tstamp > position.entry_tstamp + self.shorts_min_to_breakeven * 60:
-            if position.amount < 0 and order.trigger_price > position.wanted_entry:  # shorts
-                if bars[0].open < position.wanted_entry:
-                    order.trigger_price = position.wanted_entry
-                    self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
-                    to_update.append(order)
-
-        if order.trigger_price == 0 or position.wanted_entry == 0:
-            print('something is wrong here in exit module')
+            if order.trigger_price == 0 or position.wanted_entry == 0:
+                print('something is wrong here in exit module')
 
 
 class RsiExit(ExitModule):
