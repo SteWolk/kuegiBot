@@ -241,37 +241,64 @@ def write_dashboard(dashboardFile):
         try:
             engine: LiveTrading = thread.bot
             if engine.alive:
-                bot= engine.bot
+                bot = engine.bot
+
+                # Derive wallet_balance / realized equity
+                wallet_balance = None
+                try:
+                    # Primary: from exchange positions (works e.g. for Bybit V5 / linear)
+                    if hasattr(engine, "exchange") and hasattr(engine.exchange, "positions"):
+                        pos = engine.exchange.positions.get(engine.settings.SYMBOL)
+                        if pos is not None and isinstance(getattr(pos, "walletBalance", None), (int, float)):
+                            wallet_balance = float(pos.walletBalance)
+
+                    # Fallback: from account.open_position
+                    if wallet_balance is None:
+                        op = getattr(engine.account, "open_position", None)
+                        if op is not None and isinstance(getattr(op, "walletBalance", None), (int, float)):
+                            wallet_balance = float(op.walletBalance)
+                except Exception:
+                    wallet_balance = None
+
+                equity = engine.account.equity
+
                 result[engine.id] = {
-                    'alive': engine.alive,
+                    "alive": engine.alive,
                     "last_time": bot.last_time,
                     "last_tick": str(bot.last_tick_time),
                     "last_tick_tstamp": bot.last_tick_time.timestamp() if bot.last_tick_time is not None else None,
-                    "equity": engine.account.equity,
-                    "risk_reference":bot.risk_reference,
-                    "max_equity":bot.max_equity,
-                    "time_of_max_equity":bot.time_of_max_equity
+                    # total equity = realized + unrealized
+                    "equity": equity,
+                    # realized part: current wallet / balance
+                    "wallet_balance": wallet_balance,
+                    "realized_equity": wallet_balance,
+                    "risk_reference": bot.risk_reference,
+                    "max_equity": bot.max_equity,
+                    "time_of_max_equity": bot.time_of_max_equity,
                 }
+
                 data = result[engine.id]
-                data['positions'] = []
+                data["positions"] = []
                 for pos in engine.bot.open_positions:
-                    data['positions'].append(engine.bot.open_positions[pos].to_json())
-                data['moduleData'] = {}
-                data['moduleData'][engine.bars[0].tstamp] = ExitModule.get_data_for_json(engine.bars[0])
-                data['moduleData'][engine.bars[1].tstamp] = ExitModule.get_data_for_json(engine.bars[1])
+                    data["positions"].append(engine.bot.open_positions[pos].to_json())
+
+                data["moduleData"] = {}
+                data["moduleData"][engine.bars[0].tstamp] = ExitModule.get_data_for_json(engine.bars[0])
+                data["moduleData"][engine.bars[1].tstamp] = ExitModule.get_data_for_json(engine.bars[1])
 
             else:
                 result[engine.id] = {"alive": engine.alive}
         except Exception as e:
             logger.error("exception in writing dashboard: " + traceback.format_exc())
-            thread.bot.alive= False
+            thread.bot.alive = False
 
     try:
         os.makedirs(os.path.dirname(dashboardFile))
     except Exception:
         pass
-    with open(dashboardFile, 'w') as file:
+    with open(dashboardFile, "w") as file:
         json.dump(result, file, sort_keys=False, indent=4)
+
 
 def run(settings):
     signal.signal(signal.SIGTERM, term_handler)

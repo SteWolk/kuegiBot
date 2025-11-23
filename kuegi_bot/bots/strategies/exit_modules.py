@@ -197,14 +197,13 @@ class TimedExit(ExitModule):
         # determine new bar by timestamp
         current_t = bars[0].tstamp
         is_new_bar = (current_t != self._last_bar_tstamp)
+
         if is_new_bar:
             self._last_bar_tstamp = current_t
             self.logger.info(
                 f"[TimedExit] is_new_bar=True at t={bars[0].tstamp}, "
                 f"open={bars[0].open}, close={bars[0].close}"
             )
-        #if bars[0].open == bars[0].close: # new candle
-        if is_new_bar:
             current_tstamp = bars[0].last_tick_tstamp if bars[0].last_tick_tstamp is not None else bars[0].tstamp
             if current_tstamp > position.entry_tstamp + self.longs_min_to_exit*60:
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
