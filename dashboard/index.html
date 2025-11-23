@@ -141,7 +141,8 @@
                                         <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
                                             {{ formatPrice(position.filled_entry) }}
                                         </td>
-                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right">
+                                        <td class="px-2 py-1 whitespace-nowrap text-xs text-right"
+                                            :class="classForStopCell(position)">
                                             {{ formatPrice(position.currentStop) }}
                                         </td>
                                         <td class="px-2 py-1 whitespace-nowrap text-xs text-right"
@@ -474,6 +475,25 @@
                 } else {
                     return '-'
                 }
+            },
+            classForStopCell(position) {
+                if (typeof position.currentStop !== 'number'
+                    || typeof position.wanted_entry !== 'number'
+                    || typeof position.amount !== 'number') {
+                    return ''
+                }
+
+                // Long: SL above entry -> profit locked
+                if (position.amount > 0 && position.currentStop > position.wanted_entry) {
+                    return 'bg-green-200'
+                }
+
+                // Short: SL below entry -> profit locked
+                if (position.amount < 0 && position.currentStop < position.wanted_entry) {
+                    return 'bg-green-200'
+                }
+
+                return ''
             }
         },
         mounted() {
