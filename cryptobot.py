@@ -242,58 +242,38 @@ def write_dashboard(dashboardFile):
             engine: LiveTrading = thread.bot
             if engine.alive:
                 bot = engine.bot
-
-                # --- compute wallet_balance & unrealized equity (similar to backtest) ---
-                wallet_balance = float(engine.account.equity) if engine.account is not None else 0.0
+                # --- compute realized / unrealized equity for dashboard ---
+                wallet_balance = 0.0
                 unrealized_equity = 0.0
+                total_equity = 0.0
+
                 try:
-                    # Prefer walletBalance from the exchange position, fall back to account.open_position
-                    pos_obj = None
-                    if getattr(engine, "exchange", None) is not None \
-                            and hasattr(engine.exchange, "positions"):
-                        sym = engine.settings.SYMBOL
-                        if sym in engine.exchange.positions:
-                            pos_obj = engine.exchange.positions[sym]
+                    acc = getattr(engine, "account", None)
+                    if acc is not None:
+                        # Total equity as used by the trading engine
+                        total_equity = float(getattr(acc, "equity", 0.0) or 0.0)
 
-                    if pos_obj is None and getattr(engine.account, "open_position", None) is not None:
-                        pos_obj = engine.account.open_position
+                        # Realized part: wallet balance from the open position if available,
+                        # otherwise fall back to total_equity when there is no open position.
+                        op = getattr(acc, "open_position", None)
+                        if op is not None and getattr(op, "walletBalance", None) is not None:
+                            wallet_balance = float(op.walletBalance)
+                        else:
+                            wallet_balance = total_equity
 
-                    if pos_obj is not None and hasattr(pos_obj, "walletBalance"):
-                        wallet_balance = float(pos_obj.walletBalance)
-
-                    # Compute unrealized PnL from open_position and latest price
-                    op = getattr(engine.account, "open_position", None)
-                    if op is not None \
-                            and getattr(op, "avgEntryPrice", 0) not in (0, None) \
-                            and getattr(op, "quantity", 0) not in (0, None):
-
-                        last_price = None
-                        # Try current bar close first
-                        if hasattr(engine, "bars") and engine.bars and engine.bars[0] is not None:
-                            last_price = engine.bars[0].close
-                        # Fallback to last tick from exchange
-                        if (last_price is None or last_price == 0) \
-                                and getattr(engine, "exchange", None) is not None \
-                                and getattr(engine.exchange, "last", None) is not None:
-                            last_price = engine.exchange.last
-
-                        if last_price:
-                            if not engine.symbol.isInverse:
-                                unrealized_equity = op.quantity * (last_price - op.avgEntryPrice)
-                            else:
-                                unrealized_equity = op.quantity * (
-                                        -1.0 / last_price + 1.0 / op.avgEntryPrice
-                                )
+                        unrealized_equity = total_equity - wallet_balance
                 except Exception as e:
-                    engine.logger.warning(f"Error computing unrealized equity for dashboard: {e}")
-
-                total_equity = wallet_balance + unrealized_equity
+                    engine.logger.warning(
+                        f"Error computing realized/unrealized equity for dashboard: {e}"
+                    )
 
                 result[engine.id] = {
-                    'alive': engine.alive,
+                    "alive": engine.alive,
                     "last_time": bot.last_time,
                     "last_tick": str(bot.last_tick_time),
-                    "last_tick_tstamp": bot.last_tick_time.timestamp() if bot.last_tick_time is not None else None,
+                    "last_tick_tstamp": bot.last_tick_time.timestamp()
+                    if bot.last_tick_time is not None
+                    else None,
 
                     # Realized equity (wallet balance)
                     "equity": wallet_balance,
