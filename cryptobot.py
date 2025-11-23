@@ -242,30 +242,50 @@ def write_dashboard(dashboardFile):
             engine: LiveTrading = thread.bot
             if engine.alive:
                 bot = engine.bot
-                # --- compute realized / unrealized equity for dashboard ---
-                wallet_balance = 0.0
+                # Compute wallet balance and unrealized equity for the dashboard
+                wallet_balance = float(engine.account.equity) if engine.account is not None else 0.0
                 unrealized_equity = 0.0
-                total_equity = 0.0
 
+                # Read wallet balance from the position object if available
                 try:
-                    acc = getattr(engine, "account", None)
-                    if acc is not None:
-                        # Total equity as used by the trading engine
-                        total_equity = float(getattr(acc, "equity", 0.0) or 0.0)
+                    pos_obj = None
+                    if getattr(engine, "exchange", None) is not None and hasattr(engine.exchange, "positions"):
+                        sym = engine.settings.SYMBOL
+                        if sym in engine.exchange.positions:
+                            pos_obj = engine.exchange.positions[sym]
 
-                        # Realized part: wallet balance from the open position if available,
-                        # otherwise fall back to total_equity when there is no open position.
-                        op = getattr(acc, "open_position", None)
-                        if op is not None and getattr(op, "walletBalance", None) is not None:
-                            wallet_balance = float(op.walletBalance)
-                        else:
-                            wallet_balance = total_equity
+                    if pos_obj is None and getattr(engine.account, "open_position", None) is not None:
+                        pos_obj = engine.account.open_position
 
-                        unrealized_equity = total_equity - wallet_balance
-                except Exception as e:
-                    engine.logger.warning(
-                        f"Error computing realized/unrealized equity for dashboard: {e}"
-                    )
+                    if pos_obj is not None and hasattr(pos_obj, "walletBalance"):
+                        wallet_balance = float(pos_obj.walletBalance)
+                except Exception:
+                    engine.logger.warning("Error while reading wallet balance for dashboard.", exc_info=True)
+
+                # Compute unrealized equity from open strategy positions and latest price
+                try:
+                    last_price = None
+                    if getattr(engine, "exchange", None) is not None and getattr(engine.exchange, "last", None) not in (
+                    None, 0):
+                        last_price = float(engine.exchange.last)
+                    elif hasattr(engine, "bars") and engine.bars and engine.bars[0] is not None:
+                        last_price = float(engine.bars[0].close)
+
+                    if last_price and hasattr(engine, "bot") and hasattr(engine.bot, "open_positions"):
+                        for pos in engine.bot.open_positions.values():
+                            status = getattr(pos, "status", None)
+                            amount = getattr(pos, "amount", 0.0)
+                            entry_price = getattr(pos, "filled_entry", None) or getattr(pos, "wanted_entry", None)
+
+                            if status == "open" and amount and entry_price:
+                                if not engine.symbol.isInverse:
+                                    unrealized_equity += amount * (last_price - entry_price)
+                                else:
+                                    unrealized_equity += amount * (-1.0 / last_price + 1.0 / entry_price)
+                except Exception:
+                    engine.logger.warning("Error while computing unrealized equity for dashboard.", exc_info=True)
+
+                total_equity = wallet_balance + unrealized_equity
 
                 result[engine.id] = {
                     "alive": engine.alive,
