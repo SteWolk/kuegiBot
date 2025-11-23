@@ -186,6 +186,7 @@ class TimedExit(ExitModule):
         self.atrPeriod = atrPeriod
         self.longs_min_to_breakeven = longs_min_to_breakeven
         self.shorts_min_to_breakeven = shorts_min_to_breakeven
+        self._last_bar_tstamp = None
 
     def init(self, logger,symbol):
         super().init(logger,symbol)
@@ -193,7 +194,17 @@ class TimedExit(ExitModule):
         #self.logger.info(f"init timedExit with {self.longs_min_to_exit}, {self.atrPeriod}")
 
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
-        if bars[0].open == bars[0].close: # new candle
+        # determine new bar by timestamp
+        current_t = bars[0].tstamp
+        is_new_bar = (current_t != self._last_bar_tstamp)
+        if is_new_bar:
+            self._last_bar_tstamp = current_t
+            self.logger.info(
+                f"[TimedExit] is_new_bar=True at t={bars[0].tstamp}, "
+                f"open={bars[0].open}, close={bars[0].close}"
+            )
+        #if bars[0].open == bars[0].close: # new candle
+        if is_new_bar:
             current_tstamp = bars[0].last_tick_tstamp if bars[0].last_tick_tstamp is not None else bars[0].tstamp
             if current_tstamp > position.entry_tstamp + self.longs_min_to_exit*60:
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
@@ -391,6 +402,7 @@ class ATRrangeSL(ExitModule):
         self.shortRangefacSL = shortRangefacSL
         self.rangeATRfactor = rangeATRfactor
         self.atrPeriod = atrPeriod
+        self._last_bar_tstamp = None
 
     def init(self, logger,symbol):
         super().init(logger,symbol)
@@ -398,10 +410,15 @@ class ATRrangeSL(ExitModule):
 
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
         # trail the stop to "break even" when the price move a given factor of the entry-risk in the right direction
-
-        is_new_bar = False
-        if bars[0].open == bars[0].close:
-            is_new_bar = True
+        # determine new bar by timestamp
+        current_t = bars[0].tstamp
+        is_new_bar = (current_t != self._last_bar_tstamp)
+        if is_new_bar:
+            self._last_bar_tstamp = current_t
+            self.logger.info(
+                f"[ATRrangeSL] is_new_bar=True at t={bars[0].tstamp}, "
+                f"open={bars[0].open}, close={bars[0].close}"
+            )
 
         entry = position.wanted_entry
         if order.trigger_price is None:

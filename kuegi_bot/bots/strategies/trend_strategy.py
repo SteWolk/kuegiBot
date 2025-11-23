@@ -103,6 +103,8 @@ class TrendStrategy(StrategyWithTradeManagement):
         self.plotTrailsAndEMAs = plotTrailsAndEMAs
         self.plotBBands = plotBBands
         self.plotATR = plotATR
+        # new bar detection
+        self._last_bar_tstamp = None
 
     def init(self, bars: List[Bar], account: Account, symbol: Symbol):
         super().init(bars, account, symbol)
@@ -323,10 +325,11 @@ class TrendStrategy(StrategyWithTradeManagement):
 
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
         super().manage_open_order(order, position, bars, to_update, to_cancel, open_positions)
-
-        is_new_bar = False
-        if bars[0].open == bars[0].close:
-            is_new_bar = True
+        # determine new bar by timestamp
+        current_t = bars[0].tstamp
+        is_new_bar = (current_t != self._last_bar_tstamp)
+        if is_new_bar:
+            self._last_bar_tstamp = current_t
             self.logger.info(
                 f"[TrendStrategy] is_new_bar=True at t={bars[0].tstamp}, "
                 f"open={bars[0].open}, close={bars[0].close}"
