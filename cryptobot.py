@@ -277,11 +277,13 @@ def write_dashboard(dashboardFile):
                             amount = getattr(pos, "amount", 0.0)
                             entry_price = getattr(pos, "filled_entry", None) or getattr(pos, "wanted_entry", None)
 
-                            if status == "open" and amount and entry_price:
+                            status_str = getattr(status, "value", status)
+                            if status_str == "open" and amount and entry_price:
                                 if not engine.symbol.isInverse:
                                     unrealized_equity += amount * (last_price - entry_price)
                                 else:
                                     unrealized_equity += amount * (-1.0 / last_price + 1.0 / entry_price)
+
                 except Exception:
                     engine.logger.warning("Error while computing unrealized equity for dashboard.", exc_info=True)
 
