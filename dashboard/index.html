@@ -317,17 +317,25 @@
                         bot.uwdays = '-'
                     }
 
-                    // Realized vs unrealized equity, if backend provides fields
+                    // Realized vs unrealized equity, using wallet_balance + equity_total if present
                     let realizedEquity = null
-                    if (typeof bot.realized_equity === 'number') {
-                        realizedEquity = bot.realized_equity
-                    } else if (typeof bot.wallet_balance === 'number') {
+                    if (typeof bot.wallet_balance === 'number') {
                         realizedEquity = bot.wallet_balance
+                    } else if (typeof bot.realized_equity === 'number') {
+                        realizedEquity = bot.realized_equity
                     }
 
-                    if (typeof bot.equity === 'number' && realizedEquity !== null) {
+                    // Prefer explicit equity_total from backend, fall back to equity for backtests
+                    let equityTotal = null
+                    if (typeof bot.equity_total === 'number') {
+                        equityTotal = bot.equity_total
+                    } else if (typeof bot.equity === 'number') {
+                        equityTotal = bot.equity
+                    }
+
+                    if (equityTotal !== null && realizedEquity !== null) {
                         bot.realized_equity_calc = realizedEquity
-                        bot.unrealized_equity_calc = bot.equity - realizedEquity
+                        bot.unrealized_equity_calc = equityTotal - realizedEquity
                     } else {
                         bot.realized_equity_calc = null
                         bot.unrealized_equity_calc = null
