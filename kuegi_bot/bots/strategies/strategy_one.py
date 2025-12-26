@@ -613,7 +613,10 @@ class StrategyOne(TrendStrategy):
         if self.entry_9 and not shorted and self.shortsAllowed:
             condition_1 = bars[1].low < self.ta_data_trend_strat.lows_trail_4h_vec[-2] < bars[1].close < bars[1].open
             condition_2 = bars[1].open < bars[2].open
-            condition_3 = bars[1].close > middleband_vec[-2] - std_vec[-2] * self.entry_9_std
+            if middleband_vec is None or std_vec is None or len(middleband_vec) < 2 or len(std_vec) < 2:
+                condition_3 = False
+            else:
+                condition_3 = bars[1].close > middleband_vec[-2] - std_vec[-2] * self.entry_9_std
             condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_9_4h_rsi
             condition_6 = not market_bullish#market_bearish
             condition_7 = self.ta_trend_strat.taData_trend_strat.marketDynamic == MarketDynamic.RANGING
