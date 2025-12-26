@@ -48,6 +48,7 @@ class StrategyOne(TrendStrategy):
                  entry_11: bool = False, entry_12: bool = False,
                  entry_11_vol: float = 3.0, entry_11_atr: float = 3.0, entry_11_natr: float = 3.0,
                  entry_12_vol: float = 3.0, entry_12_rsi_4h: int = 3.0, entry_12_atr: float = 3.0, entry_12_max_rsi_4h: int = 90,
+                 entry_14: bool = False,
                  tp_fac_strat_one: float = 0,
                  plotStrategyOneData: bool = False, plotTrailsStatOne: bool = False,
                  # TrendStrategy
@@ -116,6 +117,7 @@ class StrategyOne(TrendStrategy):
         self.entry_10 = entry_10
         self.entry_11 = entry_11
         self.entry_12 = entry_12
+        self.entry_14 = entry_14
         self.risk_ref = risk_ref
         self.reduceRisk = reduceRisk
         self.entry_1_atr_fac = entry_1_atr_fac
@@ -423,20 +425,19 @@ class StrategyOne(TrendStrategy):
                                        direction=PositionDirection.LONG,
                                        ExecutionType="Limit")
 
-        entry_14 = True
         # long trail tap
-        if entry_14 and not longed and self.longsAllowed:
+        if self.entry_14 and not longed and self.longsAllowed:
             condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2] > bars[1].close
-            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > 70
+            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > 60
             condition_4 = self.ta_data_trend_strat.rsi_d > 0
-            limit = self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1] + 0.8 * (self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-1] - self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1])
+            limit = self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1] + 0.7 * (self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-1] - self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1])
             condition_5 = bars[1].close < limit
             if condition_1 and condition_3 and condition_4 and condition_5 and market_bullish:
                 longed = True
                 self.logger.info("Longing trail breakout by limit order.")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing trail breakout by limit order.")
-                entry = bars[0].close# - 0.2 *self.var_1 * atr
+                entry = bars[0].close
                 sl = entry - 1.2 * atr
                 self.open_new_position(entry=entry,
                                        stop=sl,
