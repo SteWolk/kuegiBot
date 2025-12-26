@@ -299,10 +299,10 @@ class StrategyOne(TrendStrategy):
         market_ranging = self.ta_data_trend_strat.marketRegime == MarketRegime.RANGING
         market_trending = self.ta_data_trend_strat.marketDynamic == MarketDynamic.TRENDING
         range_limit = len(middleband_vec)
+        talibbars = self.ta_trend_strat.taData_trend_strat.talibbars
 
         # short daily sfp
         if self.entry_1 and not shorted and self.shortsAllowed:
-            talibbars = self.ta_trend_strat.taData_trend_strat.talibbars
             condition_1 = talibbars.close_daily[-1] < talibbars.open_daily[-1]
             condition_2 = (
                 talibbars.high_daily[-1] > self.ta_data_trend_strat.highs_trail_4h_vec[-6] or
@@ -323,7 +323,8 @@ class StrategyOne(TrendStrategy):
 
         # long confirmed trail breakout
         if self.entry_10 and not longed and self.longsAllowed:
-            ath = (self.ta_trend_strat.taData_trend_strat.talibbars.close[-1] == max(self.ta_trend_strat.taData_trend_strat.talibbars.close)).all()
+            closes = talibbars.close
+            ath = closes[-1] == max(closes)
             condition_1 = bars[1].close > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
             condition_2 = natr_4h < self.entry_10_natr
             condition_2b = natr_4h < self.entry_10_natr_ath
@@ -401,7 +402,7 @@ class StrategyOne(TrendStrategy):
                              self.data_strat_one.shortEntry, self.data_strat_one.stopShort]
                 Indicator.write_data_static(bars[0], plot_data, self.myId())'''
 
-        # long trail breakout
+        # long trail break pullback
         if self.entry_3 and not longed and self.longsAllowed:
             condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
@@ -660,7 +661,7 @@ class StrategyOne(TrendStrategy):
             condition_3 = bars[2].open < bars[4].open > bars[2].low > bars[4].low
             condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
             condition_6 = self.entry_12_max_rsi_4h < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
-            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > self.ta_trend_strat.taData_trend_strat.talibbars.volume[-3]
+            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > talibbars.volume[-3]
             condition_8 = not market_trending #or self.var_1
             if condition_1 and condition_3 and condition_4 and condition_6 and condition_10 and condition_8:
                 self.logger.info("Longing reversal")
