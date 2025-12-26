@@ -728,7 +728,7 @@ def export_backtest_metrics_to_csv(bt, filepath, append=True):
     If file does not exist, write header + row.
     """
     if not getattr(bt, "metrics", None):
-        raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
+        return#raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
 
     metrics = bt.metrics
     file_exists = os.path.isfile(filepath)
@@ -745,7 +745,7 @@ def export_backtest_metrics_to_json(bt, filepath):
     Write bt.metrics to JSON (one object).
     """
     if not getattr(bt, "metrics", None):
-        raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
+        return#raise ValueError("BackTest has no metrics to export. Did you run bt.run()?")
 
     with open(filepath, "w") as f:
         json.dump(bt.metrics, f, indent=2)
