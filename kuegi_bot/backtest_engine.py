@@ -115,9 +115,9 @@ class BackTest(OrderInterface):
         if order.amount == 0:
             self.logger.error("trying to send order without amount")
             return
-        [posId, order_type] = TradingBot.position_id_and_type_from_order_id(order.id)
+        posId, order_type = TradingBot.position_id_and_type_from_order_id(order.id)
         if order_type == OrderType.ENTRY:
-            [unused, direction] = TradingBot.split_pos_Id(posId)
+            unused, direction = TradingBot.split_pos_Id(posId)
             if direction == PositionDirection.LONG and order.amount < 0:
                 self.logger.error("sending long entry with negative amount")
             if direction == PositionDirection.SHORT and order.amount > 0:

@@ -15,6 +15,8 @@ import os
 import json
 import csv
 
+from functools import lru_cache
+
 
 class PositionDirection(Enum):
     LONG = "long",
@@ -84,21 +86,15 @@ class TradingBot:
         return orderId
 
     @staticmethod
+    @lru_cache(maxsize=500_000)
     def position_id_and_type_from_order_id(order_id: str):
         id_parts = order_id.split("_")
-        posId = None
+        posId = id_parts[0] if len(id_parts) >= 1 else None
         order_type = None
-        if len(id_parts) >= 1:
-            posId = id_parts[0]
         if len(id_parts) >= 2:
-            type = id_parts[1]
-            if type[0] == OrderType.ENTRY.name[0]:
-                order_type = OrderType.ENTRY
-            elif type[0] == OrderType.SL.name[0]:
-                order_type = OrderType.SL
-            elif type[0] == OrderType.TP.name[0]:
-                order_type = OrderType.TP
-        return [posId, order_type]
+            # Reuse cached parsing for type
+            order_type = TradingBot.order_type_from_order_id(order_id)
+        return posId, order_type
 
     @staticmethod
     def position_id_from_order_id(order_id: str):
@@ -108,15 +104,16 @@ class TradingBot:
         return None
 
     @staticmethod
+    @lru_cache(maxsize=500_000)
     def order_type_from_order_id(order_id: str) -> OrderType:
         id_parts = order_id.split("_")
         if len(id_parts) >= 2:
-            type = id_parts[1]
-            if type[0] == OrderType.ENTRY.name[0]:
+            t = id_parts[1]
+            if t and t[0] == OrderType.ENTRY.name[0]:
                 return OrderType.ENTRY
-            elif type[0] == OrderType.SL.name[0]:
+            elif t and t[0] == OrderType.SL.name[0]:
                 return OrderType.SL
-            elif type[0] == OrderType.TP.name[0]:
+            elif t and t[0] == OrderType.TP.name[0]:
                 return OrderType.TP
         return None
 
@@ -127,21 +124,23 @@ class TradingBot:
         return signalId + "-" + str(direction.name)
 
     @staticmethod
+    @lru_cache(maxsize=200_000)
     def split_pos_Id(posId: str):
         parts = posId.split("-")
         if len(parts) >= 2:
-            if parts[1] == str(PositionDirection.SHORT.name):
+            # Avoid repeated enum name->string conversions
+            if parts[1] == PositionDirection.SHORT.name:
                 return [parts[0], PositionDirection.SHORT]
-            elif parts[1] == str(PositionDirection.LONG.name):
+            elif parts[1] == PositionDirection.LONG.name:
                 return [parts[0], PositionDirection.LONG]
-        return [posId, None]
+        return posId, None
 
     @staticmethod
     def get_other_direction_id(posId: str):
-        parts = TradingBot.split_pos_Id(posId)
-        if parts[1] is not None:
-            return TradingBot.full_pos_id(parts[0],
-                                          PositionDirection.LONG if parts[1] == PositionDirection.SHORT
+        posId, direction = TradingBot.split_pos_Id(posId)
+        if direction is not None:
+            return TradingBot.full_pos_id(posId,
+                                          PositionDirection.LONG if direction == PositionDirection.SHORT
                                           else PositionDirection.SHORT)
         return None
 
@@ -223,7 +222,7 @@ class TradingBot:
         for order in account.open_orders:
             if not order.active:
                 continue  # got cancelled during run
-            [posId, orderType] = self.position_id_and_type_from_order_id(order.id)
+            posId, orderType = self.position_id_and_type_from_order_id(order.id)
             if orderType is None:
                 continue  # none of ours
             if posId in self.open_positions.keys():
@@ -312,7 +311,7 @@ class TradingBot:
             if not order.active:
                 remaining_orders.remove(order)
                 continue  # got cancelled during run
-            [posId, orderType] = self.position_id_and_type_from_order_id(order.id)
+            posId, orderType = self.position_id_and_type_from_order_id(order.id)
             if orderType is None:
                 remaining_orders.remove(order)
                 continue  # none of ours

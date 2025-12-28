@@ -19,6 +19,7 @@ class Strategy:
         self.atr_factor_risk = 1
         self.max_risk_mul = 1
         self.telegram: TelegramBot = None
+        self._signal_prefix = None
 
     def myId(self):
         return "gen"
@@ -42,7 +43,9 @@ class Strategy:
         return 5
 
     def owns_signal_id(self, signalId: str):
-        return signalId.startswith(self.myId() + "+")
+        if self._signal_prefix is None:
+            self._signal_prefix = self.myId() + "+"
+        return signalId.startswith(self._signal_prefix)
 
     def got_data_for_position_sync(self, bars: List[Bar]) -> bool:
         raise NotImplementedError
@@ -106,9 +109,11 @@ class MultiStrategyBot(TradingBot):
         super().__init__(logger, directionFilter)
         self.myId = "MultiStrategy"
         self.strategies: List[Strategy] = []
+        self._strat_by_prefix = {}
 
     def add_strategy(self, strategy: Strategy):
         self.strategies.append(strategy)
+        self._strat_by_prefix[strategy.myId() + "+"] = strategy
 
     def prepare(self, logger, order_interface):
         super().prepare(logger, order_interface)
@@ -138,13 +143,14 @@ class MultiStrategyBot(TradingBot):
         return reduce((lambda x, y: x and y.got_data_for_position_sync(bars)), self.strategies, True)
 
     def position_got_opened_or_changed(self, position: Position, bars: List[Bar], account: Account):
-        [signalId, direction] = self.split_pos_Id(position.id)
-        for strat in self.strategies:
-            if strat.owns_signal_id(signalId):
-                self.call_with_open_positions_for_strat(strat, lambda open_pos,all_pos:
-                strat.position_got_opened_or_changed(position, bars,
-                                                     account, open_pos))
-                break
+        signalId, direction = self.split_pos_Id(position.id)
+        #signalId, direction = self.split_pos_Id(...)
+        plus = signalId.find("+")
+        prefix = signalId[:plus + 1] if plus >= 0 else None
+        strat = self._strat_by_prefix.get(prefix)
+        if strat is not None:
+            self.call_with_open_positions_for_strat(strat, lambda open_pos, all_pos:
+            strat.position_got_opened_or_changed(position, bars, account, open_pos))
 
     def get_stop_for_unmatched_amount(self, amount: float, bars: List[Bar]):
         if len(self.strategies) == 1:
@@ -154,15 +160,16 @@ class MultiStrategyBot(TradingBot):
     def call_with_open_positions_for_strat(self, strat, call):
         open_pos = {}
         pos_ids = set()
+        target_prefix = strat.myId() + "+"
         for pos in self.open_positions.values():
-            [signalId, direction] = self.split_pos_Id(pos.id)
-            if strat.owns_signal_id(signalId):
+            signalId, _direction = self.split_pos_Id(pos.id)
+            if signalId.startswith(target_prefix):
                 open_pos[pos.id] = pos
                 pos_ids.add(pos.id)
-        call(open_pos,self.open_positions)
+
+        call(open_pos, self.open_positions)
         for pos in open_pos.values():
-            if pos.id in pos_ids:
-                pos_ids.remove(pos.id)
+            pos_ids.discard(pos.id)
             self.open_positions[pos.id] = pos
         for canceled_id in pos_ids:
             del self.open_positions[canceled_id]
@@ -172,19 +179,54 @@ class MultiStrategyBot(TradingBot):
 
         to_cancel = []
         to_update = []
+        strat_ctx = {}
+
+        def get_ctx(strat):
+            ctx = strat_ctx.get(strat)
+            if ctx is not None:
+                return ctx
+
+            open_pos = {}
+            pos_ids = set()
+
+            split_pos = self.split_pos_Id
+            owns = strat.owns_signal_id
+
+            for pos in self.open_positions.values():
+                signalId, _direction = split_pos(pos.id)
+                if owns(signalId):
+                    open_pos[pos.id] = pos
+                    pos_ids.add(pos.id)
+
+            strat_ctx[strat] = (open_pos, pos_ids)
+            return open_pos, pos_ids
+
         for order in account.open_orders:
             posId = self.position_id_from_order_id(order.id)
-            if posId is None or posId not in self.open_positions.keys():
+            if posId not in self.open_positions:
                 continue
-            [signalId, direction] = self.split_pos_Id(posId)
-            for strat in self.strategies:
-                if strat.owns_signal_id(signalId):
-                    self.call_with_open_positions_for_strat(strat, lambda open_pos,all_pos:
-                    strat.manage_open_order(order,
-                                            self.open_positions[posId],
-                                            bars, to_update, to_cancel,
-                                            open_pos))
-                    break
+            signalId, direction = self.split_pos_Id(posId)
+            plus = signalId.find("+")
+            prefix = signalId[:plus + 1] if plus >= 0 else None
+            strat = self._strat_by_prefix.get(prefix)
+            if strat is not None:
+                open_pos, _pos_ids=get_ctx(strat)
+                strat.manage_open_order(order,
+                                        self.open_positions[posId],
+                                        bars, to_update, to_cancel,
+                                        open_pos)
+
+        # Write back changes and handle deletions in a single flush per strategy
+        for strat, (open_pos, pos_ids) in strat_ctx.items():
+            # Update/add positions
+            for pos in open_pos.values():
+                self.open_positions[pos.id] = pos
+                pos_ids.discard(pos.id)
+
+            # Remove canceled positions
+            for canceled_id in pos_ids:
+                if canceled_id in self.open_positions:
+                    del self.open_positions[canceled_id]
 
         for order in to_cancel:
             self.order_interface.cancel_order(order)
@@ -194,15 +236,17 @@ class MultiStrategyBot(TradingBot):
 
         pos_ids_to_cancel = []
         for p in self.open_positions.values():
-            [signalId, direction] = self.split_pos_Id(p.id)
-            for strat in self.strategies:
-                if strat.owns_signal_id(signalId):
-                    strat.manage_open_position(p, bars, account, pos_ids_to_cancel)
-                    break
+            signalId, direction = self.split_pos_Id(p.id)
+            plus = signalId.find("+")
+            prefix = signalId[:plus + 1] if plus >= 0 else None
+            strat = self._strat_by_prefix.get(prefix)
+            if strat is not None:
+                strat.manage_open_position(p, bars, account, pos_ids_to_cancel)
 
         for posId in pos_ids_to_cancel:
             self.cancel_all_orders_for_position(posId, account)
-            del self.open_positions[posId]
+            if posId in self.open_positions:
+                del self.open_positions[posId]
 
     def open_new_trades(self, bars: List[Bar], account: Account):
         for strat in self.strategies:

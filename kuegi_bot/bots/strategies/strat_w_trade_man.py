@@ -318,8 +318,9 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
         # first, close on opposite, if necessary
         if self.close_on_opposite:
             for pos in open_positions.values():
+                unused, direct = TradingBot.split_pos_Id(pos.id)
                 if pos.status == PositionStatus.OPEN and \
-                        TradingBot.split_pos_Id(pos.id)[1] == oppDirection:
+                        direct == oppDirection:
                     # execution will trigger close and cancel of other orders
                     self.order_interface.send_order(
                         Order(orderId=TradingBot.generate_order_id(pos.id, OrderType.SL),
