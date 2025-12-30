@@ -371,8 +371,8 @@ class StrategyOne(TrendStrategy):
                 condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_2_min_rsi_4h
                 condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d
                 condition_8 = not market_bearish#market_bullish
-                bullish_conditions = condition_1 and condition_2 and condition_3 and condition_8
                 condition_9 = not market_trending
+                bullish_conditions = condition_1 and condition_2 and condition_3 and condition_8 and condition_9
                 bearish_conditions = False
 
                 foundLong = False
@@ -382,7 +382,7 @@ class StrategyOne(TrendStrategy):
                                                                      stopLong, stopShort, longAmount, shortAmount)
                 # Set entries if no orders are found and the market conditions allow it
                 # go LONG
-                if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions and condition_9:
+                if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions:
                     self.open_new_position(PositionDirection.LONG, bars, stopLong, open_positions, longEntry,"StopLimit")
                     if self.telegram is not None:
                         self.telegram.send_log("Entry strategy 2: Sending long StopLimit entry order.")
