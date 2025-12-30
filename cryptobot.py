@@ -278,8 +278,9 @@ def write_dashboard(dashboardFile):
                             entry_price = getattr(pos, "filled_entry", None) or getattr(pos, "wanted_entry", None)
 
                             status_str = getattr(status, "value", status)
-                            if status_str == "open" and amount and entry_price:
-                                if not engine.symbol.isInverse:
+                            if status_str == "open" and amount and entry_price and last_price:
+                                symbol = getattr(engine.bot, "symbol", None)
+                                if symbol is not None and not symbol.isInverse:
                                     unrealized_equity += amount * (last_price - entry_price)
                                 else:
                                     unrealized_equity += amount * (-1.0 / last_price + 1.0 / entry_price)
@@ -342,9 +343,9 @@ def run(settings):
         print("error: no settings defined. nothing to do. exiting")
         sys.exit()
     if settings.TELEGRAM_BOT is not None:
-      telegram_bot:TelegramBot = TelegramBot(logger=logger,settings=dotdict(settings.TELEGRAM_BOT))
+        telegram_bot:TelegramBot = TelegramBot(logger=logger,settings=dotdict(settings.TELEGRAM_BOT))
     else:
-      telegram_bot= None
+        telegram_bot= None
     logger.info("###### loading %i bots #########" % len(settings.bots))
     if settings.bots is not None:
         sets = settings.bots[:]
