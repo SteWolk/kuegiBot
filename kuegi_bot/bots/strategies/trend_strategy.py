@@ -686,16 +686,6 @@ class TATrendStrategyIndicator(Indicator):
         else:
             self.taData_trend_strat.marketRegime = MarketRegime.RANGING
 
-        closes = self.taData_trend_strat.talibbars.close
-        mid_line = self.taData_trend_strat.lows_trail_4h_vec[-1] + 0.5 * (self.taData_trend_strat.highs_trail_4h_vec[-1] - self.taData_trend_strat.lows_trail_4h_vec[-1])
-        if self.taData_trend_strat.marketRegime == MarketRegime.BEAR and closes[-1] > mid_line:
-            pass
-        elif self.taData_trend_strat.marketRegime == MarketRegime.BULL and closes[-1] < mid_line:
-            self.taData_trend_strat.marketRegime = MarketRegime.RANGING
-
-        if closes[-1] < mid_line:
-            self.taData_trend_strat.marketRegime = MarketRegime.BEAR
-
         self.identifyMarketDynamics()
 
     def identifyMarketDynamics(self):
