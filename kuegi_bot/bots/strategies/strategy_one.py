@@ -528,7 +528,7 @@ class StrategyOne(TrendStrategy):
                 alreadyShorted = True
 
             if foundSwingHigh and foundSwingLow and not longed and not alreadyLonged and not alreadyShorted and self.longsAllowed:
-                condition_1 = 80 > self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1]# > self.entry_6_rsi_4h_max
+                condition_1 = self.entry_6_rsi_4h_max > self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > 75
                 condition_2 = natr_4h < self.entry_6_max_natr
                 condition_3 = not market_bearish#market_bullish
                 if bars[1].close > bars[idxSwingHigh].high and condition_2 and condition_1 and condition_3:
@@ -735,7 +735,8 @@ class StrategyOne(TrendStrategy):
             shortEntry = self.symbol.normalizePrice(bars[idxSwingLow].low-self.ta_data_trend_strat.atr_4h*0.05, roundUp=False)
 
             # Calculate stops
-            stopLong = longEntry - self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
+            stopLong = longEntry - self.ta_data_trend_strat.atr_4h * 0.6
+            #stopLong = longEntry - self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
             stopShort = shortEntry + self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
 
             stopLong = self.symbol.normalizePrice(stopLong, roundUp=False)
