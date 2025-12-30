@@ -1,5 +1,7 @@
 import requests
 import threading
+import requests
+from requests import RequestException
 
 class TelegramBot:
 	def __init__(self,logger,settings):
@@ -49,7 +51,15 @@ class TelegramBot:
 
 		url = 'https://api.telegram.org/bot' + self.token + '/sendMessage?chat_id=' + chat_id+ '&text=' + message
 
-		result= requests.get(url).json()
-		if not result["ok"]:
-			self.logger.warning("error sending telegram messages "+str(result))
+		try:
+			resp= requests.get(url, timeout=5)
+			result=resp.json()
+			if not result["ok"]:
+				self.logger.warning("error sending telegram messages " + str(result))
+			return
+		except RequestException as e:
+			# IMPORTANT: do not raise; just log locally
+			self.logger.warning("Telegram send failed (non-fatal): %s", e)
+			return
+
 	
