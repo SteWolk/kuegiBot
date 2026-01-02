@@ -735,8 +735,7 @@ class StrategyOne(TrendStrategy):
             shortEntry = self.symbol.normalizePrice(bars[idxSwingLow].low-self.ta_data_trend_strat.atr_4h*0.05, roundUp=False)
 
             # Calculate stops
-            stopLong = longEntry - self.ta_data_trend_strat.atr_4h * 0.6
-            #stopLong = longEntry - self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
+            stopLong = longEntry - self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
             stopShort = shortEntry + self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
 
             stopLong = self.symbol.normalizePrice(stopLong, roundUp=False)
