@@ -412,6 +412,7 @@ class ATRrangeSL(ExitModule):
         # trail the stop to "break even" when the price move a given factor of the entry-risk in the right direction
         # determine new bar by timestamp
         current_t = bars[0].tstamp
+        open_t = position.entry_tstamp
         is_new_bar = (current_t != self._last_bar_tstamp)
         if is_new_bar:
             self._last_bar_tstamp = current_t
@@ -429,14 +430,14 @@ class ATRrangeSL(ExitModule):
         direction = 1 if position.amount > 0 else -1
 
         if direction == 1:
-            if current_stop >= entry and not is_new_bar:
+            if current_stop >= entry and not is_new_bar or open_t > bars[0].tstamp:
                 skip_trailing = True
         else:
             if current_stop <= entry and not is_new_bar:
                 skip_trailing = True
 
         if not skip_trailing:
-            ep = bars[0].high if position.amount > 0 else bars[0].low
+            ep = bars[1].high if position.amount > 0 else bars[1].low
             newStop = order.trigger_price
             atrId = "ATR_" + str(self.atrPeriod)
             atr = Indicator.get_data_static(bars[1], atrId)
