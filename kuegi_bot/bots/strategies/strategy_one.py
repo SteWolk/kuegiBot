@@ -407,16 +407,19 @@ class StrategyOne(TrendStrategy):
         # long trail break pullback
         if self.entry_3 and not longed and self.longsAllowed:
             condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
+            condition_1 = bars[1].high > self.ta_data_trend_strat.highs_trail_4h_vec[-2]
             condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
-            condition_4 = self.ta_data_trend_strat.rsi_d > 70
+            condition_4 = self.ta_data_trend_strat.rsi_d > 50
             condition_5 = bars[1].open > bars[1].close
             condition_8 = not market_trending
-            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4 and condition_8:
+            condition_9 = self.entry_3_max_natr > natr_4h
+            condition_10 = std < 4 * atr
+            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4 and condition_8 and condition_9 and condition_10:
                 longed = True
                 self.logger.info("Longing trail break pullback.")
                 if self.telegram is not None:
                     self.telegram.send_log("Longing trail break pullback.")
-                entry = bars[0].close - 0.2 * atr
+                entry = bars[0].close - self.entry_3_atr_fac * atr
                 sl = entry - atr
                 self.open_new_position(entry=entry,
                                        stop=sl,
