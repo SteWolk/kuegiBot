@@ -61,6 +61,9 @@ class LiveTrading(OrderInterface):
             # init market data dict to be filled later
             self.bars: List[Bar] = []
             self.update_bars()
+            self.funding = {}
+            self._funding_range = (0, 0)  # (start_ts, end_ts) that we last fetched
+            self.update_funding()
             self.account: Account = Account()
             self.update_account()
             self.bot.reset()
@@ -192,6 +195,36 @@ class LiveTrading(OrderInterface):
             # remove minute data from older bars
             bar.subbars= []
 
+    def update_funding(self):
+        """
+        Keep funding history aligned with the currently loaded bar window.
+        Fetches funding for [oldest_bar - lookback, newest_bar].
+        """
+        if not self.bars:
+            return
+
+        newest = int(self.bars[0].tstamp)
+        oldest = int(self.bars[-1].tstamp)
+
+        # Margin so funding can be forward-filled reliably
+        lookback_sec = 24 * 60 * 60
+        start_ts = max(0, oldest - lookback_sec)
+        end_ts = newest
+
+        prev_start, prev_end = self._funding_range
+
+        # If our existing funding already covers the needed range, do nothing
+        if prev_start <= start_ts and prev_end >= end_ts and self.funding:
+            return
+
+        try:
+            self.funding = self.exchange.get_funding_history(start_ts_sec=start_ts, end_ts_sec=end_ts)
+            self._funding_range = (start_ts, end_ts)
+            self.logger.info(f"Loaded {len(self.funding)} funding points for {self.exchange.symbol} "
+                             f"({datetime.fromtimestamp(start_ts)} -> {datetime.fromtimestamp(end_ts)})")
+        except Exception:
+            self.logger.warning("Failed to update funding: " + traceback.format_exc())
+
     def check_connection(self):
         """Ensure the WS connections are still open."""
         return self.exchange.is_open()
@@ -216,6 +249,7 @@ class LiveTrading(OrderInterface):
                     self.telegram_bot.send_execution("%s having problem with unaccounted pos!" % self.id)
                 self.exchange.resyncOrders()
             self.update_bars()
+            self.update_funding()
             self.update_account()
             self.bot.on_tick(self.bars, self.account)
             for bar in self.bars:

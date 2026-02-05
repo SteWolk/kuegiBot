@@ -1,6 +1,9 @@
 import logging
 import math
 from datetime import datetime
+import time
+import requests
+
 
 from typing import List
 
@@ -139,6 +142,79 @@ class ByBitInterface(ExchangeWithWS):
                 self.longPos.quantity = size
 
         self.updatePosition_internally()
+
+    def get_funding_history(self, start_ts_sec: int, end_ts_sec: int) -> dict[int, float]:
+        """
+        Fetch funding history from Bybit public REST and return {unix_seconds: fundingRate}.
+        Uses /v5/market/funding/history and paginates backwards via endTime.
+
+        start_ts_sec/end_ts_sec are unix seconds.
+        """
+        if start_ts_sec is None or end_ts_sec is None:
+            return {}
+
+        if start_ts_sec > end_ts_sec:
+            start_ts_sec, end_ts_sec = end_ts_sec, start_ts_sec
+
+        base_url = "https://api-testnet.bybit.com" if self.settings.IS_TEST else "https://api.bybit.com"
+        url = f"{base_url}/v5/market/funding/history"
+
+        start_ms = int(start_ts_sec * 1000)
+        end_ms = int(end_ts_sec * 1000)
+
+        out: dict[int, float] = {}
+        page_end = end_ms
+
+        # Bybit limit is 200 per request
+        limit = 200
+
+        while True:
+            params = {
+                "category": self.category,   # 'linear' or 'inverse'
+                "symbol": self.symbol,
+                "startTime": start_ms,
+                "endTime": page_end,
+                "limit": limit
+            }
+
+            r = requests.get(url, params=params, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+
+            if data.get("retCode", 0) != 0:
+                self.logger.warning(f"Funding fetch retCode != 0: {data}")
+                break
+
+            rows = (data.get("result") or {}).get("list") or []
+            if not rows:
+                break
+
+            min_seen = None
+            for row in rows:
+                try:
+                    ts_ms = int(row["fundingRateTimestamp"])
+                    rate = float(row["fundingRate"])
+                except Exception:
+                    continue
+
+                ts_sec = ts_ms // 1000
+                if start_ts_sec <= ts_sec <= end_ts_sec:
+                    out[ts_sec] = rate
+
+                if min_seen is None or ts_ms < min_seen:
+                    min_seen = ts_ms
+
+            # If the earliest item in this page is already at/behind startTime, we are done
+            if min_seen is None or min_seen <= start_ms:
+                break
+
+            # paginate backward
+            page_end = min_seen - 1
+
+            # be gentle
+            time.sleep(0.05)
+
+        return out
 
     def get_avg_price_for_position(self, pos) -> float | None:
         """
