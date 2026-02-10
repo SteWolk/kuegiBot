@@ -5,10 +5,7 @@ from typing import List
 import time
 
 import plotly.graph_objects as go
-from kuegi_bot.exchanges.bitmex.bitmex_interface import BitmexInterface
 from kuegi_bot.exchanges.bybit.bybit_interface import ByBitInterface
-from kuegi_bot.exchanges.bybit_linear.bybitlinear_interface import ByBitLinearInterface
-from kuegi_bot.exchanges.phemex.phemex_interface import PhemexInterface
 from kuegi_bot.utils import log, errors
 from kuegi_bot.utils.telegram import TelegramBot
 from kuegi_bot.bots.trading_bot import TradingBot

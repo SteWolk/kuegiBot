@@ -8,7 +8,6 @@ from kuegi_bot.exchanges.bybit.bybit_interface import ByBitInterface
 from kuegi_bot.exchanges.bybit_linear.bybitlinear_interface import ByBitLinearInterface
 from kuegi_bot.exchanges.phemex.phemex_interface import PhemexInterface
 from kuegi_bot.indicators.indicator import Indicator
-from kuegi_bot.exchanges.bitmex.bitmex_interface import BitmexInterface
 from kuegi_bot.exchanges.bitfinex.bitfinex_interface import BitfinexInterface
 from kuegi_bot.utils import log
 
