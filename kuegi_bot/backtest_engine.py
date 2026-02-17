@@ -15,6 +15,7 @@ from kuegi_bot.bots.trading_bot import TradingBot, PositionDirection
 from kuegi_bot.utils.trading_classes import OrderInterface, Bar, Account, Order, Symbol, AccountPosition, \
     PositionStatus, OrderType
 from kuegi_bot.utils import log
+from datetime import datetime, timezone
 
 
 class SilentLogger(object):
@@ -347,8 +348,8 @@ class BackTest(OrderInterface):
             if bar.tstamp in self.funding:
                 funding = self.funding[bar.tstamp]
         else:
-            dt = datetime.fromtimestamp(bar.tstamp)
-            if dt.hour == 0 or dt.hour == 8 or dt.hour == 16:
+            dt = datetime.fromtimestamp(bar.tstamp, tz=timezone.utc)
+            if dt.hour in (0, 8, 16):
                 funding = 0.0001
 
         if funding != 0 and self.account.open_position.quantity != 0:
