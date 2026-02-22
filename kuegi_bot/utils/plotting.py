@@ -34,13 +34,14 @@ def plot_price_with_funding(
 
     # Normalize funding keys to int seconds and clip to the bar time range
     f: Dict[int, float] = {}
-    for k, v in funding.items():
-        try:
-            ts = int(k)
-            if start_ts <= ts <= end_ts:
-                f[ts] = float(v)
-        except Exception:
-            continue
+    if funding is not None:
+        for k, v in funding.items():
+            try:
+                ts = int(k)
+                if start_ts <= ts <= end_ts:
+                    f[ts] = float(v)
+            except Exception:
+                continue
 
     # Build price series
     t = [datetime.fromtimestamp(int(b.tstamp)) for b in bars]

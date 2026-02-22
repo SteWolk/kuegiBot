@@ -62,6 +62,7 @@ class BackTest(OrderInterface):
 
         self.account: Account = None
         self.initialEquity = 100  # BTC
+        self.drawdown_basis_equity = self.initialEquity
 
         self.hh = self.initialEquity
         self.maxDD = 0
@@ -72,6 +73,7 @@ class BackTest(OrderInterface):
 
         self.current_bars: List[Bar] = []
         self.unrealized_equity = 0
+        self.cum_funding_for_dd = 0
         self.total_equity_vec = []
         self.equity_vec = []
         self.unrealized_equity_vec = []
@@ -79,7 +81,7 @@ class BackTest(OrderInterface):
         self.ll_vec = []
         self.dd_vec = []
         self.maxDD_vec = []
-
+        self.wallet_equity_vec = []
         self.reset()
 
     def reset(self):
@@ -95,13 +97,15 @@ class BackTest(OrderInterface):
         self.underwater = 0
         self.maxExposure = 0
         self.unrealized_equity=0
+        self.cum_funding_for_dd  = 0
+        self.drawdown_basis_equity = self.initialEquity
         self.total_equity_vec = []
         self.equity_vec = []
         self.unrealized_equity_vec = []
         self.hh_vec = []
         self.ll_vec = []
         self.dd_vec = []
-
+        self.wallet_equity_vec = []
         self.bot.reset()
 
         self.current_bars = []
@@ -292,10 +296,19 @@ class BackTest(OrderInterface):
         if avgEntry != 0:
             posValue = self.account.open_position.quantity * (
                 (intrabarToCheck.close - avgEntry) if not self.symbol.isInverse else (
-                            -1 / intrabarToCheck.close + 1 / avgEntry))
+                        -1 / intrabarToCheck.close + 1 / avgEntry))
         else:
             posValue = 0
-        self.account.equity = self.account.open_position.walletBalance  # + posValue # for backtest: ignore equity for better charts
+
+        # True economic equity (real wallet includes fees + funding; add unrealized PnL)
+        self.account.equity = self.account.open_position.walletBalance + posValue
+
+        # Separate basis for drawdown/statistics:
+        # - excludes unrealized PnL noise
+        # - excludes funding impact
+        # - still includes realized PnL and trading fees
+        self.drawdown_basis_equity = self.account.open_position.walletBalance + self.cum_funding_for_dd
+
         self.account.usd_equity = self.account.equity * intrabarToCheck.close
         self.unrealized_equity = posValue
 
@@ -305,9 +318,9 @@ class BackTest(OrderInterface):
 
         if math.fabs( # TODO: why?
                 self.account.open_position.quantity) < 1 or self.lastHHPosition * self.account.open_position.quantity < 0:
-            self.hh = max(self.hh, self.account.equity)  # only update HH on closed positions, no open equity
+            self.hh = max(self.hh, self.drawdown_basis_equity)  # only update HH on closed positions, no open equity
             self.lastHHPosition = self.account.open_position.quantity
-        dd = self.hh - self.account.equity
+        dd = self.hh - self.drawdown_basis_equity
         if dd > self.maxDD:
             self.maxDD = dd
 
@@ -315,7 +328,7 @@ class BackTest(OrderInterface):
             1 / self.current_bars[0].close if self.symbol.isInverse else self.current_bars[0].close)
         self.maxExposure = max(self.maxExposure, exposure)
         # inside write_plot_data, after equity_vec append
-        if self.account.equity < self.hh:
+        if self.drawdown_basis_equity < self.hh:
             self.underwater += 1
         else:
             self.underwater = 0
@@ -330,16 +343,29 @@ class BackTest(OrderInterface):
         else:
             unrealized_equity = 0
 
-        self.equity_vec.append(self.account.equity)
+        #self.equity_vec.append(self.drawdown_basis_equity)
+        self.equity_vec.append(self.account.open_position.walletBalance)
+        self.wallet_equity_vec.append(self.account.open_position.walletBalance)
         self.unrealized_equity_vec.append(unrealized_equity)
-        self.total_equity_vec.append(self.account.equity + unrealized_equity)
-        self.hh_vec.append(self.equity_vec[0] if len(self.hh_vec) == 0 else
-                           (self.equity_vec[-1] if self.equity_vec[-1] > self.hh_vec[-1] else self.hh_vec[-1]))
-        self.ll_vec.append(self.equity_vec[0] if len(self.ll_vec) == 0 else
-                           (self.equity_vec[-1] if self.equity_vec[-1] < self.ll_vec[-1] else self.ll_vec[-1]))
-        self.dd_vec.append(-(self.hh_vec[-1] - self.equity_vec[-1]))
-        self.maxDD_vec.append(self.dd_vec[0] if len(self.maxDD_vec) == 0 else
-                              (self.dd_vec[-1] if self.dd_vec[-1] < self.maxDD_vec[-1] else self.maxDD_vec[-1]))
+        self.total_equity_vec.append(self.account.equity)
+        dd_basis = self.drawdown_basis_equity
+
+        self.hh_vec.append(
+            dd_basis if len(self.hh_vec) == 0
+            else (dd_basis if dd_basis > self.hh_vec[-1] else self.hh_vec[-1])
+        )
+
+        self.ll_vec.append(
+            dd_basis if len(self.ll_vec) == 0
+            else (dd_basis if dd_basis < self.ll_vec[-1] else self.ll_vec[-1])
+        )
+
+        self.dd_vec.append(-(self.hh_vec[-1] - dd_basis))
+
+        self.maxDD_vec.append(
+            self.dd_vec[0] if len(self.maxDD_vec) == 0
+            else (self.dd_vec[-1] if self.dd_vec[-1] < self.maxDD_vec[-1] else self.maxDD_vec[-1])
+        )
 
     def do_funding(self):
         funding = 0
@@ -353,7 +379,14 @@ class BackTest(OrderInterface):
                 funding = 0.0001
 
         if funding != 0 and self.account.open_position.quantity != 0:
-            self.account.open_position.walletBalance -= funding * self.account.open_position.quantity / bar.open
+            qty = self.account.open_position.quantity
+            if funding != 0 and qty != 0:
+                if self.funding is None:
+                    funding = abs(funding) if qty > 0 else -abs(funding)
+
+                funding_delta = funding * qty / bar.open
+                self.account.open_position.walletBalance -= funding_delta
+                self.cum_funding_for_dd += funding_delta
 
     def run(self):
         self.reset()
@@ -610,10 +643,14 @@ class BackTest(OrderInterface):
             'total equity':self.total_equity_vec,
             #'HH':self.hh_vec,
             #'LL':self.ll_vec,
-            'realized equity':self.equity_vec,
             'maxDD':self.maxDD_vec,
             'DD':self.dd_vec,
         }
+
+        # only plot wallet equity if the vector exists and has data
+        if hasattr(self, "wallet_equity_vec") and len(self.wallet_equity_vec) > 0:
+            self.wallet_equity_vec.reverse()
+            sub_data['wallet equity'] = self.wallet_equity_vec
 
         colors = {
             # "unrealized equity": 'black',
@@ -621,6 +658,7 @@ class BackTest(OrderInterface):
             #"HH": 'lightgreen',
             # "LL": 'magenta',
             "realized equity": 'blue',
+            "wallet equity": 'darkblue',
             "maxDD": 'red',
             "DD": 'orange'
         }
@@ -629,7 +667,7 @@ class BackTest(OrderInterface):
         for key in sub_data.keys():
             data_abs.append(
                 go.Scatter(x=time, y=sub_data.get(key), name=(key + ': %.1f' % sub_data.get(key)[0]),
-                           line=dict(color=colors[key], width=2))
+                           line=dict(color=colors.get(key, 'gray'), width=2))
             )
         fig_abs = go.Figure(data = data_abs)
         return fig_abs
