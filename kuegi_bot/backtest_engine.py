@@ -51,14 +51,18 @@ class BackTest(OrderInterface):
         self.bot.prepare(SilentLogger(), self)
 
         self.market_slipage_percent = market_slipage_percent
-        self.maker_fee = -0.00025
-        self.taker_fee = 0.00075
+        # Fallback defaults in fractional rates (e.g. 0.00055 = 0.055%)
+        self.maker_fee = 0.0002
+        self.taker_fee = 0.00055
 
         if symbol is not None:
             self.symbol = symbol
         else:
-            self.symbol: Symbol = Symbol(symbol="XBTUSD", isInverse=True, tickSize=0.5, lotSize=1, makerFee=-0.00025,
-                                         takerFee=0.00075)
+            self.symbol: Symbol = Symbol(symbol="XBTUSD", isInverse=True, tickSize=0.5, lotSize=1, makerFee=0.0002,
+                                         takerFee=0.00055)
+        # Use symbol fee settings if available.
+        self.maker_fee = self._normalize_fee_rate(getattr(self.symbol, "makerFee", self.maker_fee), "makerFee")
+        self.taker_fee = self._normalize_fee_rate(getattr(self.symbol, "takerFee", self.taker_fee), "takerFee")
 
         self.account: Account = None
         self.initialEquity = 100  # BTC
@@ -83,6 +87,26 @@ class BackTest(OrderInterface):
         self.maxDD_vec = []
         self.wallet_equity_vec = []
         self.reset()
+
+    def _normalize_fee_rate(self, rate, field_name: str) -> float:
+        """
+        Normalize fee rate to fraction form:
+        - 0.00055 => 0.055%
+        - 0.055   => interpreted as 0.055% and converted to 0.00055
+        """
+        try:
+            normalized = float(rate)
+        except Exception:
+            self.logger.warning("Invalid %s=%s, defaulting to 0.", field_name, str(rate))
+            return 0.0
+
+        # Backward compatibility for historical script values entered as percent units.
+        if abs(normalized) >= 0.01:
+            self.logger.warning(
+                "Interpreting %s=%s as percent and converting to fraction.", field_name, normalized
+            )
+            normalized = normalized / 100.0
+        return normalized
 
     def reset(self):
         self.account = Account()

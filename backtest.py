@@ -112,18 +112,18 @@ bars_b = load_bars(30 * monthsBack, tf,0,exchange,pair)
 
 symbol=None
 if pair == "BTCUSD":
-    symbol=Symbol(symbol="BTCUSD", isInverse=True, tickSize=0.5, lotSize=1.0, makerFee=-0.025,takerFee=0.075, quantityPrecision=2,pricePrecision=2)
+    symbol=Symbol(symbol="BTCUSD", isInverse=True, tickSize=0.5, lotSize=1.0, makerFee=0.0002,takerFee=0.00055, quantityPrecision=2,pricePrecision=2)
 elif pair == "XRPUSD":
-    symbol=Symbol(symbol="XRPUSD", isInverse=True, tickSize=0.0001, lotSize=0.01, makerFee=-0.025,takerFee=0.075, quantityPrecision=2,pricePrecision=4)
+    symbol=Symbol(symbol="XRPUSD", isInverse=True, tickSize=0.0001, lotSize=0.01, makerFee=0.0002,takerFee=0.00055, quantityPrecision=2,pricePrecision=4)
 elif pair == "ETHUSD":
-    symbol=Symbol(symbol="ETHUSD", isInverse=True, tickSize=0.01, lotSize=0.1, makerFee=-0.025,takerFee=0.075, quantityPrecision=2,pricePrecision=2)
+    symbol=Symbol(symbol="ETHUSD", isInverse=True, tickSize=0.01, lotSize=0.1, makerFee=0.0002,takerFee=0.00055, quantityPrecision=2,pricePrecision=2)
 elif pair == "BTCUSDT":
-    symbol=Symbol(symbol="BTCUSDT", isInverse=False, tickSize=0.5, lotSize=0.0001, makerFee=-0.025,takerFee=0.075, quantityPrecision=5,pricePrecision=4)
+    symbol=Symbol(symbol="BTCUSDT", isInverse=False, tickSize=0.5, lotSize=0.0001, makerFee=0.0002,takerFee=0.00055, quantityPrecision=5,pricePrecision=4)
 
 
 #
 #for binance_f
-#symbol=Symbol(symbol="BTCUSDT", isInverse=False, tickSize=0.001, lotSize=0.00001, makerFee=0.02, takerFee=0.04, quantityPrecision=5)
+#symbol=Symbol(symbol="BTCUSDT", isInverse=False, tickSize=0.001, lotSize=0.00001, makerFee=0.0002, takerFee=0.00055, quantityPrecision=5)
 
 bars_full= bars_b
 oos_cut=int(len(bars_full)/4)
