@@ -609,7 +609,7 @@ class BackTest(OrderInterface):
                 + " | profit: " + ("%.1f" % (100 * profit / self.initialEquity)) + "%"
                 + " | unreal.: " + ("%.1f" % (100 * self.unrealized_equity_vec[-1] / self.initialEquity)) + "%"
                 + " | maxDD: " + ("%.1f" % (100 * self.maxDD_vec[-1] / self.initialEquity)) + "%"
-                + " | maxExp: " + ("%.1f" % (self.maxExposure / self.initialEquity)) + "%"
+                + " | maxExp: " + ("%.1f" % (100 * self.maxExposure / self.initialEquity)) + "%"
                 + " | relY_final: " + ("%.2f" % (rel_per_year))
                 + " | relY_final_trades: " + ("%.2f" % (rel_per_year_trades))
                 + " | CAGR: " + ("%.2f" % (100 * cagr)) + "%"
