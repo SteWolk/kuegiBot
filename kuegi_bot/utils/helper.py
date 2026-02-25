@@ -1,7 +1,9 @@
 import json
 import logging
+import re
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 from kuegi_bot.exchanges.bybit.bybit_interface import ByBitInterface
@@ -57,10 +59,10 @@ def history_file_name(index, exchange,symbol='') :
 known_history_files= {
     "bitmex_XBTUSD": 49,
     "bybit_BTCUSD": 76,
-    "bybit_ETHUSD":60,
+    "bybit_ETHUSD":62,
     "bybit_XRPUSD":14,
     "bybit_BTCUSDM21":1,
-    "bybit-linear_BTCUSDT":43,
+    "bybit-linear_BTCUSDT":49,
     "bybit-linear_LINKUSDT":3,
     "bybit-linear_ETHUSDT":-1,
     "bybit-linear_LTCUSDT":3,
@@ -91,13 +93,44 @@ def load_funding(exchange='bybit',symbol='BTCUSD'):
         return None
 
 
+def _available_history_indices(exchange: str, symbol: str) -> List[int]:
+    folder = Path("history") / exchange
+    if not folder.exists():
+        return []
+
+    prefix = f"{symbol}_" if len(symbol) > 0 else ""
+    pattern = re.compile(rf"^{re.escape(prefix)}M1_(\d+)\.json$")
+
+    out: List[int] = []
+    for entry in folder.iterdir():
+        if not entry.is_file():
+            continue
+        match = pattern.match(entry.name)
+        if match is not None:
+            out.append(int(match.group(1)))
+    out.sort()
+    return out
+
+
 def load_bars(days_in_history, wanted_tf, start_offset_minutes=0,exchange='bybit',symbol='BTCUSD'):
-    #empty symbol is legacy and means btcusd
-    end = known_history_files[exchange+"_"+symbol]
-    start = max(0,end - int(days_in_history * 1440 / 50000)-1)
+    # empty symbol is legacy and means BTCUSD
+    indices = _available_history_indices(exchange=exchange, symbol=symbol)
+    if len(indices) == 0:
+        # Legacy fallback when files are not discoverable.
+        key = exchange + "_" + symbol
+        if key not in known_history_files:
+            raise FileNotFoundError(f"No history files found for {exchange}/{symbol}")
+        end = known_history_files[key]
+        start = max(0, end - int(days_in_history * 1440 / 50000) - 1)
+        indices = list(range(start, end + 1))
+    else:
+        # 50k M1 bars per file => ~34.7 days/file. Load only required tail files + small buffer.
+        files_needed = int(days_in_history * 1440 / 50000) + 2
+        indices = indices[-max(1, files_needed):]
+
     m1_bars_temp = []
-    logger.info("loading " + str(end - start+1) + " history files from "+exchange)
-    for i in range(start, end + 1):
+    logger.info("loading " + str(len(indices)) + " history files from " + exchange)
+    for i in indices:
         with open(history_file_name(i,exchange,symbol)) as f:
             m1_bars_temp += json.load(f)
     logger.info("done loading files, now preparing them")
