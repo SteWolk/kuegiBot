@@ -17,6 +17,22 @@ It also comes with no warranty whatsoever and is for educational purposes only!
 
 This section describes how to get the environment (i highly recommend virtual environments) set up to run the bot (backtest and trading). As mentioned before, this is highly experimental and use of the bot on real money is not recommended unless you *really* know what you are doing.
 
+## environment setup (dockerfile-compatible)
+
+If you have Docker available, the quickest way to reproduce the project environment is:
+
+```bash
+docker build -t kuegibot-dev .
+docker run --rm -it kuegibot-dev
+```
+
+If Docker is not available, use the local setup helper to install a conda environment aligned with the VPS botenv profile:
+
+```bash
+./codex/setup.sh
+/workspace/.local/miniconda3/bin/conda run -n botenv python backtest.py
+```
+
 ## needed modules
 first install the needed packages via pip. They are listed in requirements.txt and can be installed via the standard steps
 

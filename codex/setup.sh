@@ -1,39 +1,56 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
-# --- System build deps (entspricht apt-get im Dockerfile) ---
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
-  gcc g++ make
-sudo rm -rf /var/lib/apt/lists/*
+# Setup a conda environment aligned with the VPS botenv profile.
+# Intended for online environments.
 
-# --- Conda initialisieren (Codex hat i.d.R. bereits conda/miniconda; falls nicht, siehe Hinweis unten) ---
-# shellcheck disable=SC1091
-source "$(conda info --base)/etc/profile.d/conda.sh"
+CONDA_ROOT="${CONDA_ROOT:-/workspace/.local/miniconda3}"
+CONDA_BIN="${CONDA_BIN:-$CONDA_ROOT/bin/conda}"
+ENV_NAME="${ENV_NAME:-botenv}"
 
-# --- Reproduzierbares Env wie im Dockerfile ---
-ENV_NAME="kuegibot"
-
-# Env neu anlegen oder aktualisieren
-if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-  conda activate "$ENV_NAME"
-else
-  conda create -y -n "$ENV_NAME" -c conda-forge python=3.10
-  conda activate "$ENV_NAME"
+if [[ ! -x "$CONDA_BIN" ]]; then
+  mkdir -p "$(dirname "$CONDA_ROOT")"
+  curl -fsSL -o /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+  bash /tmp/miniconda.sh -b -p "$CONDA_ROOT"
 fi
 
-# Pakete exakt wie im Dockerfile (conda-forge)
-conda install -y -c conda-forge \
-  ta-lib=0.4.19 \
+"$CONDA_BIN" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+"$CONDA_BIN" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+"$CONDA_BIN" config --system --remove channels defaults || true
+"$CONDA_BIN" config --system --add channels conda-forge
+
+"$CONDA_BIN" create -y -n "$ENV_NAME" --override-channels -c conda-forge \
+  python=3.10.18 \
   numpy=1.26.0 \
-  pandas=2.2.1
+  pandas=2.2.1 \
+  ta-lib=0.4.32 \
+  plotly=4.12.0 \
+  requests=2.31.0 \
+  websocket-client=1.1.0 \
+  zstandard=0.23.0
 
-# --- Pip deps ---
-python -m pip install -U pip
-if [ -f requirements.txt ]; then
-  pip install --no-cache-dir -r requirements.txt
-fi
+"$CONDA_BIN" run -n "$ENV_NAME" pip install --no-cache-dir \
+  pybit==5.6.2 \
+  pycryptodome==3.23.0 \
+  websockets==15.0.1
 
-# Optional: kurze Smoke-Checks
-python -c "import sys; print(sys.version)"
-python -c "import talib, numpy, pandas; print('ta-lib', talib.__version__); print('numpy', numpy.__version__); print('pandas', pandas.__version__)"
+"$CONDA_BIN" run -n "$ENV_NAME" python - <<'PY'
+import sys
+import numpy, pandas, talib, plotly, requests, websocket, zstandard
+import pybit, websockets, Crypto
+
+print("python", sys.version.split()[0])
+print("numpy", numpy.__version__)
+print("pandas", pandas.__version__)
+print("ta-lib", talib.__version__)
+print("plotly", plotly.__version__)
+print("requests", requests.__version__)
+print("websocket-client", websocket.__version__)
+print("zstandard", zstandard.__version__)
+print("websockets", websockets.__version__)
+print("pycryptodome", Crypto.__version__)
+print("pybit", pybit.__file__)
+PY
+
+echo
+printf 'Environment ready. Use: %s run -n %s <command>\n' "$CONDA_BIN" "$ENV_NAME"
