@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Install Python and all deps via conda (including ta-lib 0.4.19)
 RUN conda install -c conda-forge \
-    python=3.10 \
+    python=3.10.13 \
     ta-lib=0.4.19 \
     numpy=1.26.0 \
     pandas=2.2.1 \
