@@ -53,6 +53,7 @@ class TrendStrategy(StrategyWithTradeManagement):
                  # Plots
                  use_shapes: bool = False, plotBackgroundColor4Trend: bool = False, plotTrailsAndEMAs: bool = False,
                  plotBBands: bool = False, plotATR:bool = False,
+                 trend_indicator_id_suffix: str = "",
                  # StrategyWithTradeManagement
                  maxPositions: int = 100, consolidate: bool = False, close_on_opposite: bool = False, bars_till_cancel_triggered: int = 3,
                  limit_entry_offset_perc: float = -0.1, delayed_cancel: bool = False, cancel_on_filter: bool = True,
@@ -72,7 +73,8 @@ class TrendStrategy(StrategyWithTradeManagement):
             atr_4h_period= atr_4h_period, natr_4h_period_slow= natr_4h_period_slow, bbands_4h_period= bbands_4h_period,
             sl_upper_bb_std_fac = sl_upper_bb_std_fac,
             sl_lower_bb_std_fac = sl_lower_bb_std_fac, trend_var_1= trend_var_1, oversold_limit_w_rsi = 30, reset_level_of_oversold_rsi = 50,
-            rsi_4h_period = rsi_4h_period, rsi_d_period = 14, volume_sma_4h_period= volume_sma_4h_period, trend_atr_fac = trend_atr_fac
+            rsi_4h_period = rsi_4h_period, rsi_d_period = 14, volume_sma_4h_period= volume_sma_4h_period, trend_atr_fac = trend_atr_fac,
+            indicator_id_suffix=trend_indicator_id_suffix
         )
         self.plotIndicators = plotIndicators
         self.plot_RSI = plot_RSI
@@ -489,8 +491,10 @@ class TATrendStrategyIndicator(Indicator):
                  sl_upper_bb_std_fac: float = 2.0,
                  sl_lower_bb_std_fac: float = 2.0,
                  # debug variables
-                 trend_var_1: float = 0):
-        super().__init__('TAtrend')
+                 trend_var_1: float = 0,
+                 indicator_id_suffix: str = ""):
+        suffix = indicator_id_suffix if indicator_id_suffix is not None else ""
+        super().__init__('TAtrend' + suffix)
         # local input data
         self.taData_trend_strat = TAdataTrendStrategy()
         # debug variables
