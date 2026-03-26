@@ -134,29 +134,48 @@ while True:
             print("Something went wrong. I am done.")
         break
 
+    try:
+        payload = r.json()
+    except ValueError:
+        print("Could not parse JSON response. I am done.")
+        break
+
     # extract data from request in json format
     if exchange in["bybit", "bybit-linear"]:
-        data = r.json()["result"]['list']
+        ret_code = payload.get("retCode")
+        if str(ret_code) not in ["0", "None"]:
+            ret_msg = payload.get("retMsg")
+            print(f"Bybit API error: retCode={ret_code}, retMsg={ret_msg}")
+            if str(ret_code) in ["10006", "429"]:
+                print("Rate limited by Bybit. Waiting 2 seconds and retrying.")
+                sleep(2)
+                continue
+            break
+        result = payload.get("result") or {}
+        data = result.get("list")
+        if data is None:
+            print(f"Unexpected Bybit payload (missing result.list): {payload}")
+            break
         data.reverse()
         package_complete = len(data) >= limit-1
         if len(acc_data)>0 and len(data) > 0 and data[0][0] == acc_data[-1][0]:
             print("removed duplicate timestamp: " + str(data[0][0]))
             data = data[1:]
     elif exchange == "bitstamp":
-        data = r.json()["data"]["ohlc"]
+        data = payload["data"]["ohlc"]
         package_complete = len(data) >= limit
         if len(acc_data)>0 and len(data) > 0 and data[0]['timestamp'] == acc_data[-1]['timestamp']:
             print("removed duplicate timestamp: " + str(data[0]['timestamp']))
             data = data[1:]
     elif exchange in ['kucoin-spot', 'kucoin-futures', 'okx']:
-        data = r.json()['data']
+        data = payload['data']
         data.reverse()
         package_complete = len(data) >= limit - 1
         if len(acc_data) > 0 and len(data) > 0 and data[0][0] == acc_data[-1][0]:
             print("removed duplicate timestamp: " + str(data[0][0]))
             data = data[1:]
     elif exchange in ['bitfinex']:
-        data = r.json()
+        data = payload
         package_complete = len(data) >= limit - 1
         if len(acc_data) > 0 and len(data) > 0 and data[0][0] == acc_data[-1][0]:
             print("removed duplicate timestamp: " + str(data[0][0]))
