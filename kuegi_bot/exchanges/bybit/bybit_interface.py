@@ -216,6 +216,72 @@ class ByBitInterface(ExchangeWithWS):
 
         return out
 
+    def get_open_interest_history(
+        self,
+        start_ts_sec: int,
+        end_ts_sec: int,
+        interval_time: str = "5min",
+    ) -> dict[int, float]:
+        """
+        Fetch open-interest history from Bybit public REST and return {unix_seconds: openInterest}.
+        Uses /v5/market/open-interest and paginates backwards via endTime.
+        """
+        if start_ts_sec is None or end_ts_sec is None:
+            return {}
+
+        if start_ts_sec > end_ts_sec:
+            start_ts_sec, end_ts_sec = end_ts_sec, start_ts_sec
+
+        base_url = "https://api-testnet.bybit.com" if self.settings.IS_TEST else "https://api.bybit.com"
+        url = f"{base_url}/v5/market/open-interest"
+
+        start_ms = int(start_ts_sec * 1000)
+        end_ms = int(end_ts_sec * 1000)
+        page_end = end_ms
+        limit = 200
+        out: dict[int, float] = {}
+
+        while True:
+            params = {
+                "category": self.category,
+                "symbol": self.symbol,
+                "intervalTime": str(interval_time),
+                "startTime": start_ms,
+                "endTime": page_end,
+                "limit": limit,
+            }
+            r = requests.get(url, params=params, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+
+            if data.get("retCode", 0) != 0:
+                self.logger.warning(f"Open-interest fetch retCode != 0: {data}")
+                break
+
+            rows = (data.get("result") or {}).get("list") or []
+            if not rows:
+                break
+
+            min_seen = None
+            for row in rows:
+                try:
+                    ts_ms = int(row["timestamp"])
+                    oi = float(row["openInterest"])
+                except Exception:
+                    continue
+                ts_sec = ts_ms // 1000
+                if start_ts_sec <= ts_sec <= end_ts_sec:
+                    out[ts_sec] = oi
+                if min_seen is None or ts_ms < min_seen:
+                    min_seen = ts_ms
+
+            if min_seen is None or min_seen <= start_ms:
+                break
+            page_end = min_seen - 1
+            time.sleep(0.05)
+
+        return out
+
     def get_avg_price_for_position(self, pos) -> float | None:
         """
         Return the average entry price for the given Position from Bybit,

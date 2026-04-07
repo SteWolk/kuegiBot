@@ -24,9 +24,13 @@ backtest_v2.py
 ta-lib-python
 
 settings/
+/settings/private/
 
 # Assistant session workspace (local-only, do not commit)
 /.assistant_workspace/
+/assistant_workspace/
 
 # Private backtest scripts with tuned params (local-only, do not commit)
-/backtest/
+/backtest/results/
+/backtest/__pycache__/
+/backtest/legacy_optimizer_local/

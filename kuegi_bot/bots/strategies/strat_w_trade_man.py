@@ -369,6 +369,9 @@ class StrategyWithTradeManagement(StrategyWithExitModulesAndFilter):
         signalId = self.get_signal_id(bars)
         posId = TradingBot.full_pos_id(signalId, direction)
         pos = Position(id=posId, entry=entry, amount=amount, stop=stop, tstamp=bars[0].tstamp)
+        # Keep entry execution mode on the position so exit modules can avoid
+        # using pre-entry bar context for delayed entries (e.g. StopLimit).
+        pos.entry_execution_type = ExecutionType
         open_positions[posId] = pos
         self.order_interface.send_order(Order(orderId=TradingBot.generate_order_id(posId, OrderType.ENTRY),
                                               amount=amount, trigger=trigger_price, limit=limit_price))

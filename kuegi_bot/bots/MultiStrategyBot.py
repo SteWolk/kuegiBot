@@ -20,6 +20,7 @@ class Strategy:
         self.max_risk_mul = 1
         self.telegram: TelegramBot = None
         self._signal_prefix = None
+        self._backtest_bars = None
 
     def myId(self):
         return "gen"
@@ -38,6 +39,9 @@ class Strategy:
 
     def init(self, bars: List[Bar], account: Account, symbol: Symbol):
         self.symbol = symbol
+
+    def set_backtest_bars(self, bars: List[Bar]):
+        self._backtest_bars = bars
 
     def min_bars_needed(self) -> int:
         return 5
@@ -115,22 +119,50 @@ class MultiStrategyBot(TradingBot):
         self.strategies.append(strategy)
         self._strat_by_prefix[strategy.myId() + "+"] = strategy
 
+    @staticmethod
+    def _signal_prefix(signal_id: str):
+        plus_index = signal_id.find("+")
+        if plus_index < 0:
+            return None
+        return signal_id[:plus_index + 1]
+
+    def _strategy_for_position_id(self, position_id: str):
+        signal_id, _direction = self.split_pos_Id(position_id)
+        prefix = self._signal_prefix(signal_id)
+        if prefix is None:
+            return None
+        return self._strat_by_prefix.get(prefix)
+
+    def set_backtest_bars(self, bars: List[Bar]):
+        super().set_backtest_bars(bars)
+        for strat in self.strategies:
+            strat.set_backtest_bars(bars)
+
     def prepare(self, logger, order_interface):
         super().prepare(logger, order_interface)
         for strat in self.strategies:
             strat.prepare(logger, order_interface)
 
     def init(self, bars: List[Bar], account: Account, symbol: Symbol, unique_id: str = ""):
-        self.logger.info(
-            "init with strategies: %s" % reduce((lambda result, strategy: result + ", " + strategy.myId()),
-                                                self.strategies,
-                                                ""))
+        strategy_names = reduce(
+            lambda result, strategy: result + ", " + strategy.myId(),
+            self.strategies,
+            "",
+        )
+        self.logger.info("init with strategies: %s" % strategy_names)
         for strat in self.strategies:
             strat.init(bars, account, symbol)
         super().init(bars=bars, account=account, symbol=symbol, unique_id=unique_id)
 
     def min_bars_needed(self):
-        return reduce(lambda x, y: max(x, y.min_bars_needed()), self.strategies, 5)
+        if len(self.strategies) == 0:
+            return 5
+        max_needed = 5
+        for strategy in self.strategies:
+            bars_needed = strategy.min_bars_needed()
+            if bars_needed > max_needed:
+                max_needed = bars_needed
+        return max_needed
 
     def prep_bars(self, bars: list):
         newbar = self.is_new_bar
@@ -140,17 +172,18 @@ class MultiStrategyBot(TradingBot):
             strategy.prep_bars(newbar, bars)
 
     def got_data_for_position_sync(self, bars: List[Bar]):
-        return reduce((lambda x, y: x and y.got_data_for_position_sync(bars)), self.strategies, True)
+        for strategy in self.strategies:
+            if not strategy.got_data_for_position_sync(bars):
+                return False
+        return True
 
     def position_got_opened_or_changed(self, position: Position, bars: List[Bar], account: Account):
-        signalId, direction = self.split_pos_Id(position.id)
-        #signalId, direction = self.split_pos_Id(...)
-        plus = signalId.find("+")
-        prefix = signalId[:plus + 1] if plus >= 0 else None
-        strat = self._strat_by_prefix.get(prefix)
+        strat = self._strategy_for_position_id(position.id)
         if strat is not None:
-            self.call_with_open_positions_for_strat(strat, lambda open_pos, all_pos:
-            strat.position_got_opened_or_changed(position, bars, account, open_pos))
+            def on_position_change(open_pos, _all_pos):
+                strat.position_got_opened_or_changed(position, bars, account, open_pos)
+
+            self.call_with_open_positions_for_strat(strat, on_position_change)
 
     def get_stop_for_unmatched_amount(self, amount: float, bars: List[Bar]):
         if len(self.strategies) == 1:
@@ -158,6 +191,18 @@ class MultiStrategyBot(TradingBot):
         return None
 
     def call_with_open_positions_for_strat(self, strat, call):
+        if len(self.strategies) == 1 and self.strategies[0] is strat:
+            target_prefix = strat.myId() + "+"
+            all_match = True
+            for pos in self.open_positions.values():
+                signalId, _direction = self.split_pos_Id(pos.id)
+                if not signalId.startswith(target_prefix):
+                    all_match = False
+                    break
+            if all_match:
+                call(self.open_positions, self.open_positions)
+                return
+
         open_pos = {}
         pos_ids = set()
         target_prefix = strat.myId() + "+"
@@ -205,16 +250,17 @@ class MultiStrategyBot(TradingBot):
             posId = self.position_id_from_order_id(order.id)
             if posId not in self.open_positions:
                 continue
-            signalId, direction = self.split_pos_Id(posId)
-            plus = signalId.find("+")
-            prefix = signalId[:plus + 1] if plus >= 0 else None
-            strat = self._strat_by_prefix.get(prefix)
+            strat = self._strategy_for_position_id(posId)
             if strat is not None:
-                open_pos, _pos_ids=get_ctx(strat)
-                strat.manage_open_order(order,
-                                        self.open_positions[posId],
-                                        bars, to_update, to_cancel,
-                                        open_pos)
+                open_pos, _pos_ids = get_ctx(strat)
+                strat.manage_open_order(
+                    order,
+                    self.open_positions[posId],
+                    bars,
+                    to_update,
+                    to_cancel,
+                    open_pos,
+                )
 
         # Write back changes and handle deletions in a single flush per strategy
         for strat, (open_pos, pos_ids) in strat_ctx.items():
@@ -236,10 +282,7 @@ class MultiStrategyBot(TradingBot):
 
         pos_ids_to_cancel = []
         for p in self.open_positions.values():
-            signalId, direction = self.split_pos_Id(p.id)
-            plus = signalId.find("+")
-            prefix = signalId[:plus + 1] if plus >= 0 else None
-            strat = self._strat_by_prefix.get(prefix)
+            strat = self._strategy_for_position_id(p.id)
             if strat is not None:
                 strat.manage_open_position(p, bars, account, pos_ids_to_cancel)
 
@@ -250,12 +293,24 @@ class MultiStrategyBot(TradingBot):
 
     def open_new_trades(self, bars: List[Bar], account: Account):
         for strat in self.strategies:
-            self.call_with_open_positions_for_strat(strat, lambda open_pos,all_open_pos:
-            strat.open_new_trades(self.is_new_bar, self.directionFilter, bars, account, open_pos,all_open_pos))
+            def run_new_entries(open_pos, all_open_pos):
+                strat.open_new_trades(
+                    self.is_new_bar,
+                    self.directionFilter,
+                    bars,
+                    account,
+                    open_pos,
+                    all_open_pos,
+                )
+
+            self.call_with_open_positions_for_strat(strat, run_new_entries)
 
     def consolidate_open_positions(self, bars: List[Bar], account: Account):
         for strat in self.strategies:
-            self.call_with_open_positions_for_strat(strat, lambda open_pos, all_open_pos: strat.consolidate_positions(self.is_new_bar, bars, account, open_pos))
+            def run_consolidation(open_pos, _all_open_pos):
+                strat.consolidate_positions(self.is_new_bar, bars, account, open_pos)
+
+            self.call_with_open_positions_for_strat(strat, run_consolidation)
 
     def add_to_price_data_plot(self, fig: go.Figure, bars: List[Bar], time):
         super().add_to_price_data_plot(fig, bars, time)

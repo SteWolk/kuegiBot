@@ -4,7 +4,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 from kuegi_bot.exchanges.bybit.bybit_interface import ByBitInterface
 from kuegi_bot.exchanges.bybit_linear.bybitlinear_interface import ByBitLinearInterface
@@ -56,6 +56,10 @@ def history_file_name(index, exchange,symbol='') :
     return 'history/' + exchange + '/' + symbol + 'M1_' + str(index) + '.json'
 
 
+def open_interest_file_name(exchange: str, symbol: str = "BTCUSD") -> str:
+    return 'history/' + str(exchange) + '/' + str(symbol) + '_open_interest.json'
+
+
 known_history_files= {
     "bitmex_XBTUSD": 49,
     "bybit_BTCUSD": 76,
@@ -90,6 +94,31 @@ def load_funding(exchange='bybit',symbol='BTCUSD'):
                 funding[int(tstamp)] = value
         return funding
     except Exception as e:
+        return None
+
+
+def load_open_interest(exchange: str = 'bybit', symbol: str = 'BTCUSD') -> Optional[Dict[int, float]]:
+    try:
+        path = open_interest_file_name(exchange=exchange, symbol=symbol)
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+
+        series = raw.get("series") if isinstance(raw, dict) and isinstance(raw.get("series"), dict) else raw
+        if not isinstance(series, dict):
+            return None
+
+        out: Dict[int, float] = {}
+        for ts_raw, value_raw in series.items():
+            try:
+                ts_int = int(ts_raw)
+                value = float(value_raw)
+            except Exception:
+                continue
+            out[ts_int] = value
+        if len(out) == 0:
+            return None
+        return out
+    except Exception:
         return None
 
 

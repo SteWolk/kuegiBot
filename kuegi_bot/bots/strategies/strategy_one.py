@@ -1,15 +1,27 @@
 import math
-from typing import List
+from typing import Dict, List, Optional
 
 import plotly.graph_objects as go
 import numpy as np
 import talib
 
-from kuegi_bot.bots.strategies.trend_strategy import TrendStrategy, TAdataTrendStrategy, MarketRegime, MarketDynamic, BBands
+from kuegi_bot.bots.strategies.trend_strategy import TrendStrategy
+from kuegi_bot.bots.strategies.trend_indicator_engine import TAdataTrendStrategy
+from kuegi_bot.bots.strategies.strategy_one_entry_modules import (
+    EntryExecutionContext,
+    as_entry_module,
+    build_entry_context,
+    default_entry_modules,
+    entry_gate_passes,
+    module_passes_common_rules,
+    module_name,
+)
+from kuegi_bot.bots.strategies.strategy_one_entry_schema import (
+    find_deprecated_legacy_keys,
+    flatten_entry_module_config,
+)
 from kuegi_bot.bots.trading_bot import TradingBot, PositionDirection
 from kuegi_bot.indicators.indicator import Indicator
-from kuegi_bot.indicators.talibbars import TAlibBars
-from kuegi_bot.utils.trading_classes import Bar, Account, Symbol, OrderType, Position
 from kuegi_bot.utils.trading_classes import Bar, Account, Symbol, OrderType, Order, PositionStatus, Position
 
 
@@ -26,29 +38,9 @@ class StrategyOne(TrendStrategy):
     def __init__(self,
                  # StrategyOne
                  var_1: float = 0, var_2: float = 0, risk_ref: float = 1, reduceRisk: bool = False, max_r: float = 20,
-                 entry_4_std_fac: float = 1, entry_4_std_fac_reclaim: float = 1,
+                 entry_module_config: dict = None,
                  h_highs_trail_period: int = 1, h_lows_trail_period: int = 1,
-                 entry_5: bool = False, entry_3: bool = False,
-                 entry_6: bool = False, entry_2: bool = False, entry_7: bool = False,
-                 entry_1:bool = False, entry_1_atr_fac: float = 1, entry_1_vol_fac: float = 2.0,
-                 entry_4: bool = False,
-                 entry_3_max_natr: float = 2, entry_3_vol_fac: float = 2.0, entry_3_rsi_4h: int = 50,
-                 entry_7_std_fac: float = 1, entry_7_4h_rsi: float = 2.5, entry_7_vol_fac: float = 2,
                  shortsAllowed: bool = False, longsAllowed: bool = False,
-                 entry_2_max_natr: float = 1, entry_2_min_rsi_4h: int = 50, entry_2_min_rsi_d:int = 80,
-                 entry_2_min_natr: float = 1, entry_2_min_rsi_4h_short:int=50,entry_2_min_rsi_d_short:int=50,
-                 entry_3_atr_fac: float = 1, entry_5_rsi_d: int = 40, entry_5_rsi_4h: int = 80,
-                 entry_5_atr_fac: float = 0.8, entry_5_trail_1_period: int = 10, entry_5_trail_2_period: int = 10,
-                 entry_5_vol_fac: float = 2.0,
-                 entry_6_rsi_4h_max: int = 90, entry_6_max_natr: float = 2,
-                 entry_6_atr_fac: float = 5, entry_8: bool = False, entry_9:bool = False, entry_10: bool = False,
-                 entry_8_vol_fac: float = 2.0,
-                 entry_9_std: float = 1, entry_9_4h_rsi: int = 50, entry_9_atr: float = 2,
-                 entry_10_natr: float = 2, entry_10_natr_ath: float = 2, entry_10_rsi_4h: int = 50,
-                 entry_11: bool = False, entry_12: bool = False,
-                 entry_11_vol: float = 3.0, entry_11_atr: float = 3.0, entry_11_natr: float = 3.0,
-                 entry_12_vol: float = 3.0, entry_12_rsi_4h: int = 3.0, entry_12_atr: float = 3.0, entry_12_max_rsi_4h: int = 90,
-                 entry_14: bool = False,
                  tp_fac_strat_one: float = 0,
                  plotStrategyOneData: bool = False, plotTrailsStatOne: bool = False,
                  # TrendStrategy
@@ -58,6 +50,9 @@ class StrategyOne(TrendStrategy):
                  plotIndicators: bool = False, plot_RSI: bool = False, use_shapes: bool = False, plotBackgroundColor4Trend: bool = False,
                  plotTrailsAndEMAs: bool = False, plotBBands:bool=False, plotATR:bool=False, trend_atr_fac: float = 0.5,
                  trend_var_1: float = 0,
+                 indicator_mode: str = "incremental",
+                 open_interest_by_tstamp: Optional[Dict[int, float]] = None,
+                 funding_by_tstamp: Optional[Dict[int, float]] = None,
                  # Risk
                  risk_with_trend: float = 1, risk_counter_trend: float = 1, risk_ranging: float = 1, risk_fac_shorts = 1,
                  # SL
@@ -80,6 +75,9 @@ class StrategyOne(TrendStrategy):
             volume_sma_4h_period =volume_sma_4h_period,
             plotIndicators = plotIndicators, plot_RSI = plot_RSI,
             trend_var_1 = trend_var_1,
+            indicator_mode = indicator_mode,
+            open_interest_by_tstamp=open_interest_by_tstamp,
+            funding_by_tstamp=funding_by_tstamp,
             # Risk
             risk_with_trend = risk_with_trend, risk_counter_trend = risk_counter_trend, risk_ranging = risk_ranging, risk_fac_shorts=risk_fac_shorts,
             # SL
@@ -101,65 +99,14 @@ class StrategyOne(TrendStrategy):
         self.data_strat_one = DataStrategyOne()
         self.ta_strat_one = TAStrategyOne(timeframe = timeframe, h_highs_trail_period= h_highs_trail_period,
                                           h_lows_trail_period = h_lows_trail_period, ta_data_trend_strat = self.ta_data_trend_strat)
-        # Entry variables
-        self.var_1 = var_1 # for backtesting
-        self.var_2 = var_2 # for backtesting
+        # Backtest/risk variables
+        self.var_1 = var_1
+        self.var_2 = var_2
         self.max_r = max_r
-        self.entry_1 = entry_1
-        self.entry_2 = entry_2
-        self.entry_3 = entry_3
-        self.entry_4 = entry_4
-        self.entry_5 = entry_5
-        self.entry_6 = entry_6
-        self.entry_8 = entry_8
-        self.entry_7 = entry_7
-        self.entry_9 = entry_9
-        self.entry_10 = entry_10
-        self.entry_11 = entry_11
-        self.entry_12 = entry_12
-        self.entry_14 = entry_14
         self.risk_ref = risk_ref
         self.reduceRisk = reduceRisk
-        self.entry_1_atr_fac = entry_1_atr_fac
-        self.entry_1_vol_fac = entry_1_vol_fac
-        self.entry_2_max_natr = entry_2_max_natr
-        self.entry_2_min_natr = entry_2_min_natr
-        self.entry_2_min_rsi_4h = entry_2_min_rsi_4h
-        self.entry_2_min_rsi_4h_short = entry_2_min_rsi_4h_short
-        self.entry_2_min_rsi_d = entry_2_min_rsi_d
-        self.entry_2_min_rsi_d_short = entry_2_min_rsi_d_short
-        self.entry_3_atr_fac = entry_3_atr_fac
-        self.entry_3_vol_fac = entry_3_vol_fac
-        self.entry_3_max_natr = entry_3_max_natr
-        self.entry_3_rsi_4h = entry_3_rsi_4h
-        self.entry_4_std_fac = entry_4_std_fac
-        self.entry_4_std_fac_reclaim = entry_4_std_fac_reclaim
-        self.entry_5_rsi_d = entry_5_rsi_d
-        self.entry_5_rsi_4h = entry_5_rsi_4h
-        self.entry_5_atr_fac = entry_5_atr_fac
-        self.entry_5_trail_1_period = entry_5_trail_1_period
-        self.entry_5_trail_2_period = entry_5_trail_2_period
-        self.entry_5_vol_fac = entry_5_vol_fac
-        self.entry_6_max_natr = entry_6_max_natr
-        self.entry_6_rsi_4h_max = entry_6_rsi_4h_max
-        self.entry_6_atr_fac = entry_6_atr_fac
-        self.entry_7_4h_rsi = entry_7_4h_rsi
-        self.entry_7_std_fac = entry_7_std_fac
-        self.entry_7_vol_fac = entry_7_vol_fac
-        self.entry_8_vol_fac = entry_8_vol_fac
-        self.entry_9_4h_rsi = entry_9_4h_rsi
-        self.entry_9_std = entry_9_std
-        self.entry_9_atr = entry_9_atr
-        self.entry_10_natr = entry_10_natr
-        self.entry_10_natr_ath = entry_10_natr_ath
-        self.entry_10_rsi_4h = entry_10_rsi_4h
-        self.entry_11_vol = entry_11_vol
-        self.entry_11_atr = entry_11_atr
-        self.entry_11_natr = entry_11_natr
-        self.entry_12_vol = entry_12_vol
-        self.entry_12_rsi_4h = entry_12_rsi_4h
-        self.entry_12_max_rsi_4h = entry_12_max_rsi_4h
-        self.entry_12_atr = entry_12_atr
+
+        module_config = flatten_entry_module_config(entry_module_config)
         self.sl_atr_fac = sl_atr_fac
         self.shortsAllowed = shortsAllowed
         self.longsAllowed = longsAllowed
@@ -167,16 +114,80 @@ class StrategyOne(TrendStrategy):
         self.plotStrategyOneData = plotStrategyOneData
         self.plotTrailsStatOne = plotTrailsStatOne
 
+        deprecated_keys = find_deprecated_legacy_keys(entry_module_config if isinstance(entry_module_config, dict) else {})
+        if len(deprecated_keys) > 0:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning(
+                    "StrategyOne legacy entry params are deprecated and should be migrated to schema-v1: %s",
+                    ", ".join(deprecated_keys),
+                )
+
+        self.entryModules = default_entry_modules(module_config)
+
     def myId(self):
         return "strategyOne"
+
+    def _find_entry_module_index(self, name: str):
+        for idx, entry_module in enumerate(self.entryModules):
+            if module_name(entry_module) == name:
+                return idx
+        return None
+
+    def listEntryModules(self):
+        return [module_name(entry_module) for entry_module in self.entryModules]
+
+    def clearEntryModules(self):
+        self.entryModules = []
+        return self
+
+    def withoutEntryModule(self, name: str):
+        idx = self._find_entry_module_index(name)
+        if idx is None:
+            raise ValueError("Entry module not found: " + str(name))
+        del self.entryModules[idx]
+        return self
+
+    def withEntryModule(self, module, before: str = None, after: str = None, replace: str = None):
+        if before is not None and after is not None:
+            raise ValueError("Use either 'before' or 'after', not both.")
+
+        normalized = as_entry_module(module)
+        normalized_name = module_name(normalized)
+
+        if replace is not None:
+            idx = self._find_entry_module_index(replace)
+            if idx is None:
+                raise ValueError("Entry module to replace not found: " + str(replace))
+            self.entryModules[idx] = normalized
+            return self
+
+        if self._find_entry_module_index(normalized_name) is not None:
+            raise ValueError("Entry module already registered: " + normalized_name)
+
+        if before is not None:
+            idx = self._find_entry_module_index(before)
+            if idx is None:
+                raise ValueError("Reference entry module not found: " + str(before))
+            self.entryModules.insert(idx, normalized)
+            return self
+
+        if after is not None:
+            idx = self._find_entry_module_index(after)
+            if idx is None:
+                raise ValueError("Reference entry module not found: " + str(after))
+            self.entryModules.insert(idx + 1, normalized)
+            return self
+
+        self.entryModules.append(normalized)
+        return self
 
     def init(self, bars: List[Bar], account: Account, symbol: Symbol):
         self.logger.info(vars(self))
         super().init(bars, account, symbol)
 
     def min_bars_needed(self) -> int:
-        min_bars = super().min_bars_needed()
-        return min_bars
+        return super().min_bars_needed()
 
     def prep_bars(self, is_new_bar: bool, bars: list):
         if is_new_bar:
@@ -218,63 +229,39 @@ class StrategyOne(TrendStrategy):
         super().manage_open_order(order, position, bars, to_update, to_cancel, open_positions)
 
     def got_data_for_position_sync(self, bars: List[Bar]) -> bool:
-        result= super().got_data_for_position_sync(bars)
-        return result
+        return super().got_data_for_position_sync(bars)
 
     def open_new_trades(self, is_new_bar, directionFilter, bars, account, open_positions, all_open_pos: dict):
-        if not is_new_bar:
+        enter_position_NOW_1 = False
+        if enter_position_NOW_1 and self.var_1 != 67 and self.symbol.symbol == 'BTCUSDT':
+            entry = bars[0].close
+            stop = entry + 2000
+            self.open_new_position(entry=entry,
+                                   stop=stop,
+                                   open_positions=open_positions,
+                                   bars=bars,
+                                   direction=PositionDirection.SHORT,
+                                   ExecutionType="Market")
+            self.var_1 = 67
+
+        enter_position_NOW_2 = False
+        if enter_position_NOW_2 and self.var_2 != 89 and self.symbol.symbol == 'ETHUSDT':
+            self.open_new_position(entry=bars[0].close,
+                                   stop=3500,
+                                   open_positions=open_positions,
+                                   bars=bars,
+                                   direction=PositionDirection.LONG,
+                                   ExecutionType="Market")
+            self.var_2 = 89
+
+        if not entry_gate_passes(
+            strategy=self,
+            is_new_bar=is_new_bar,
+            bars=bars,
+            open_positions=open_positions,
+            all_open_pos=all_open_pos,
+        ):
             return
-
-        if not self.entries_allowed(bars):
-            self.logger.info("New entries not allowed")
-            if self.telegram is not None:
-                self.telegram.send_log("New entries not allowed")
-            return
-
-        if self.ta_data_trend_strat.atr_4h is None:
-            self.logger.info("atr not available")
-            return
-
-        if self.ta_data_trend_strat.marketRegime == MarketRegime.NONE:
-            self.logger.info("Market regime unknown")
-            return
-
-        if len(all_open_pos) >= self.maxPositions and self.consolidate is False:
-            self.logger.info("Reached max Positions: " + str(len(all_open_pos)))
-            if self.telegram is not None:
-                self.telegram.send_log("Reached max Positions")
-            return
-
-        if self.reduceRisk:
-            totalPos = 0
-            totalWorstCase = 0
-            for pos in open_positions.values():
-                filled_entry=pos.filled_entry
-                amount = pos.amount
-                if filled_entry is not None:
-                    for o in pos.connectedOrders:
-                        orderType = TradingBot.order_type_from_order_id(o.id)
-                        if orderType == OrderType.SL:
-                            initial_stop = pos.initial_stop
-                            wanted_entry = pos.wanted_entry
-                            sl = o.trigger_price
-                            if self.symbol.isInverse:
-                                worstCase = (1 / sl - 1 / filled_entry) / (1 / wanted_entry - 1 / initial_stop)
-                                initialRisk = amount / initial_stop - amount / wanted_entry
-                            else:
-                                worstCase = (sl - filled_entry) / (wanted_entry - initial_stop)
-                                initialRisk = amount * (wanted_entry - initial_stop)
-
-                            totalPos += pos.amount
-                            totalWorstCase += (worstCase*initialRisk)
-
-            totalWorstCase = totalWorstCase / self.risk_ref
-            if totalWorstCase < - self.max_r:
-                self.logger.info("Too much active risk. No new entries.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Too much active risk. No new entries.")
-                    self.telegram.send_log("totalWorstCase:" + str(totalWorstCase))
-                return
 
         self.logger.info("New bar. Checking for new entry options")
         self.logger.info("Market Regime: "+str(self.ta_data_trend_strat.marketRegime))
@@ -286,401 +273,34 @@ class StrategyOne(TrendStrategy):
         shorted = False
 
         # Entries by Market Orders
-        std = self.ta_data_trend_strat.bbands_4h.std
-        std_vec = self.ta_data_trend_strat.bbands_4h.std_vec
-        atr = self.ta_data_trend_strat.atr_4h
-        atr_trail_mix = self.ta_data_trend_strat.atr_trail_mix
-        natr_4h = self.ta_data_trend_strat.natr_4h
-        atr_min = atr
-        if natr_4h < 1:
-            atr_min = atr + atr * (1 - natr_4h)
-        middleband = self.ta_data_trend_strat.bbands_4h.middleband
-        middleband_vec = self.ta_data_trend_strat.bbands_4h.middleband_vec
-        market_bullish = self.ta_data_trend_strat.marketRegime == MarketRegime.BULL
-        market_bearish = self.ta_data_trend_strat.marketRegime == MarketRegime.BEAR
-        market_ranging = self.ta_data_trend_strat.marketRegime == MarketRegime.RANGING
-        market_trending = self.ta_data_trend_strat.marketDynamic == MarketDynamic.TRENDING
-        range_limit = len(middleband_vec)
-        talibbars = self.ta_trend_strat.taData_trend_strat.talibbars
+        entry_context = build_entry_context(self)
+        execution_context = EntryExecutionContext(
+            strategy=self,
+            bars=bars,
+            account=account,
+            open_positions=open_positions,
+            direction_filter=directionFilter,
+            entry_context=entry_context,
+            longed=longed,
+            shorted=shorted,
+        )
 
-        # short daily sfp
-        if self.entry_1 and not shorted and self.shortsAllowed:
-            condition_1 = talibbars.close_daily[-1] < talibbars.open_daily[-1]
-            condition_2 = (
-                talibbars.high_daily[-1] > self.ta_data_trend_strat.highs_trail_4h_vec[-6] or
-                talibbars.high_daily[-1] > self.ta_data_trend_strat.highs_trail_4h_vec[-7]
-            )
-            condition_3 = market_bearish
-            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_1_vol_fac < self.ta_data_trend_strat.volume_4h
-            if condition_1 and condition_2 and condition_3 and condition_4:
-                self.logger.info("Shorting daily sfp")
-                if self.telegram is not None:
-                    self.telegram.send_log("Shorting daily sfp")
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close + atr_trail_mix * self.entry_1_atr_fac,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
+        for idx, entry_module in enumerate(self.entryModules):
+            normalized_module = entry_module
+            has_run = hasattr(normalized_module, "run")
+            has_enabled = hasattr(normalized_module, "enabled")
+            if not has_run or not has_enabled:
+                normalized_module = as_entry_module(normalized_module)
+                self.entryModules[idx] = normalized_module
 
-        # long confirmed trail breakout
-        if self.entry_10 and not longed and self.longsAllowed:
-            closes = talibbars.close
-            ath = closes[-1] == max(closes)
-            condition_1 = bars[1].close > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
-            condition_2 = natr_4h < self.entry_10_natr
-            condition_2b = natr_4h < self.entry_10_natr_ath
-            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] < self.entry_10_rsi_4h
-            condition_4 = not market_bearish
-            condition_5 = bars[1].close - bars[1].open > bars[2].close - bars[2].open
-            condition_6 = bars[1].open > bars[4].close
-            condition_7 = self.ta_data_trend_strat.rsi_d > 50
-            condition_8 = not market_trending
-            condition_9 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * 2.6 > self.ta_data_trend_strat.volume_4h
-            conditions_set_1 = condition_1 and condition_2 and condition_3 and condition_4 and condition_5 and condition_7 and condition_8 and condition_9
-            conditions_set_2 = condition_1 and condition_2b and ath and condition_3 and condition_4 and condition_6
-            if conditions_set_1 or conditions_set_2:
-                longed = True
-                self.logger.info("Longing confirmed trail breakout.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing confirmed trail breakout.")
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[1].low-atr*0.2,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Market")
-                self.logger.info("Sending additional long.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Sending additional long.")
-                entry = bars[0].close - 0.2 * atr
-                self.open_new_position(entry=entry,
-                                       stop=entry - atr_min,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Limit")
+            module_enabled = normalized_module.enabled(execution_context)
+            module_ready = normalized_module.is_ready(execution_context)
+            module_common_ok = module_passes_common_rules(normalized_module, execution_context)
+            if module_enabled and module_ready and module_common_ok:
+                normalized_module.run(execution_context)
 
-        # limit order - entries
-        if self.entry_2:
-            # Calculate potential trade entries
-            longEntry, shortEntry, stopLong, stopShort, longAmount, shortAmount, alreadyLonged, alreadyShorted = self.calc_entry_and_exit(bars)
-
-            if longEntry is not None and shortEntry is not None:
-                condition_1 = natr_4h < self.entry_2_max_natr
-                condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_2_min_rsi_4h
-                condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_d > self.entry_2_min_rsi_d
-                condition_8 = not market_bearish#market_bullish
-                condition_9 = not market_trending
-                bullish_conditions = condition_1 and condition_2 and condition_3 and condition_8 and condition_9
-                bearish_conditions = False
-
-                foundLong = False
-                foundShort = False
-                if bullish_conditions or bearish_conditions:
-                    foundLong, foundShort = self.update_existing_entries(account, open_positions, longEntry, shortEntry,
-                                                                     stopLong, stopShort, longAmount, shortAmount)
-                # Set entries if no orders are found and the market conditions allow it
-                # go LONG
-                if not foundLong and self.longsAllowed and directionFilter >= 0 and bullish_conditions:
-                    self.open_new_position(PositionDirection.LONG, bars, stopLong, open_positions, longEntry,"StopLimit")
-                    if self.telegram is not None:
-                        self.telegram.send_log("Entry strategy 2: Sending long StopLimit entry order.")
-
-                # go SHORT
-                if not foundShort and self.shortsAllowed and directionFilter <= 0 and shortEntry is not None and bearish_conditions:
-                    self.open_new_position(PositionDirection.SHORT, bars, stopShort, open_positions, shortEntry,"StopLimit")
-                    if self.telegram is not None:
-                        self.telegram.send_log("Entry strategy 2: Sending short StopLimit entry order.")
-
-                # Save parameters
-                '''self.data_strat_one.longEntry = longEntry
-                self.data_strat_one.shortEntry = shortEntry
-                self.data_strat_one.stopLong = stopLong
-                self.data_strat_one.stopShort = stopShort
-
-                # Write Data to plot
-                plot_data = [self.data_strat_one.longEntry, self.data_strat_one.stopLong,
-                             self.data_strat_one.shortEntry, self.data_strat_one.stopShort]
-                Indicator.write_data_static(bars[0], plot_data, self.myId())'''
-
-        # long trail break pullback
-        if self.entry_3 and not longed and self.longsAllowed:
-            condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2]
-            condition_1 = bars[1].high > self.ta_data_trend_strat.highs_trail_4h_vec[-2]
-            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > self.entry_3_rsi_4h
-            condition_4 = self.ta_data_trend_strat.rsi_d > 50
-            condition_5 = bars[1].open > bars[1].close
-            condition_8 = not market_trending
-            condition_9 = self.entry_3_max_natr > natr_4h
-            condition_10 = std < 4 * atr
-            if condition_1 and condition_5 and market_bullish and condition_3 and condition_4 and condition_8 and condition_9 and condition_10:
-                longed = True
-                self.logger.info("Longing trail break pullback.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing trail break pullback.")
-                entry = bars[0].close - self.entry_3_atr_fac * atr
-                sl = entry - atr
-                self.open_new_position(entry=entry,
-                                       stop=sl,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Limit")
-
-        # long trail tap
-        if self.entry_14 and not longed and self.longsAllowed:
-            condition_1 = bars[1].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-2] > bars[1].close
-            condition_3 = self.ta_data_trend_strat.rsi_4h_vec[-1] > 60
-            condition_4 = self.ta_data_trend_strat.rsi_d > 0
-            limit = self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1] + 0.7 * (self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-1] - self.ta_strat_one.taData_strat_one.h_lows_trail_vec[-1])
-            condition_5 = bars[1].close < limit
-            if condition_1 and condition_3 and condition_4 and condition_5 and market_bullish:
-                longed = True
-                self.logger.info("Longing trail breakout by limit order.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing trail breakout by limit order.")
-                entry = bars[0].close
-                sl = entry - 1.2 * atr
-                self.open_new_position(entry=entry,
-                                       stop=sl,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Market")
-
-        # Long strength when certain BBand levels are reclaimed
-        if self.entry_4:
-            sold_off_bband = False
-            # Find the index when sell_off_level was reached
-            for i in range(1,range_limit,1):
-                sell_off_level = middleband_vec[-i] - std_vec[-i] * self.entry_4_std_fac
-                reclaim_level = sell_off_level + std_vec[-i] * self.entry_4_std_fac_reclaim
-                if bars[i].close > reclaim_level and i > 1:
-                    sold_off_bband = False
-                    break
-                if bars[i].close <= sell_off_level:
-                    sold_off_bband = True
-                    break
-
-            if sold_off_bband:
-                sell_off_level = middleband_vec[-1] - std_vec[-1] * self.entry_4_std_fac
-                reclaim_level = sell_off_level + std_vec[-1] * self.entry_4_std_fac_reclaim
-                condition_1 = bars[1].close > reclaim_level
-                if condition_1 and not longed and self.longsAllowed:
-                    longed = True
-                    self.logger.info("Longing bollinger bands reclaim 1.")
-                    if self.telegram is not None:
-                        self.telegram.send_log("Longing bollinger bands reclaim 1.")
-                    self.open_new_position(entry=bars[0].close,
-                                           stop=bars[0].close - self.sl_atr_fac * atr_trail_mix,
-                                           open_positions=open_positions,
-                                           bars=bars,
-                                           direction=PositionDirection.LONG,
-                                           ExecutionType="Market")
-
-        # short trail breakdown
-        if self.entry_5 and not shorted and self.shortsAllowed:
-            trail_broke = (bars[1].close < self.ta_strat_one.taData_strat_one.h_body_lows_trail_vec[-self.entry_5_trail_1_period:-2]).all()
-            opened_above_trail = (bars[1].open > self.ta_strat_one.taData_strat_one.h_body_lows_trail_vec[-self.entry_5_trail_2_period:-2]).all()
-            condition_1 = True
-            condition_2 = self.ta_trend_strat.taData_trend_strat.rsi_d < self.entry_5_rsi_d
-            condition_3 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_5_rsi_4h
-            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_5_vol_fac < self.ta_data_trend_strat.volume_4h
-            condition_5 = not market_bullish#market_bearish
-            if trail_broke and opened_above_trail and condition_2 and condition_1 and condition_3 and condition_4:# and condition_5:
-                self.logger.info("Shorting trail break.")
-                if self.telegram is not None:
-                    self.telegram.send_log("Shorting trail break.")
-                shorted = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=min(bars[1].high,bars[0].close + atr_trail_mix * self.entry_5_atr_fac),
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
-
-        # trade swing breakouts by market orders
-        if self.entry_6:
-            depth = 40
-            foundSwingHigh = False
-            foundSwingLow = False
-            idxSwingHigh = 0
-            idxSwingLow = 0
-            for i in range(3, depth):
-                if bars[i+2].close < bars[i+1].close < bars[i].close > bars[i-1].close:
-                    foundSwingHigh = True
-                    idxSwingHigh = i
-                    break
-
-            if foundSwingHigh:
-                close_values = [bar.close for bar in bars[2:idxSwingHigh]]
-                alreadyLonged = any(close > bars[idxSwingHigh].high for close in close_values)
-            else:
-                alreadyLonged = True
-
-            for i in range(3, depth):
-                if bars[i+3].low > bars[i+2].low > bars[i+1].low > bars[i].low < bars[i-1].low < bars[i-2].low:
-                    foundSwingLow = True
-                    idxSwingLow = i
-                    break
-            if foundSwingLow:
-                close_values = [bar.close for bar in bars[2:idxSwingLow]]
-                alreadyShorted = any(close < bars[idxSwingLow].low for close in close_values)
-            else:
-                alreadyShorted = True
-
-            if foundSwingHigh and foundSwingLow and not longed and not alreadyLonged and not alreadyShorted and self.longsAllowed:
-                condition_1 = self.entry_6_rsi_4h_max > self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > 75
-                condition_2 = natr_4h < self.entry_6_max_natr
-                condition_3 = not market_bearish#market_bullish
-                if bars[1].close > bars[idxSwingHigh].high and condition_2 and condition_1 and condition_3:
-                    self.logger.info("Longing swing breakout.")
-                    if self.telegram is not None:
-                        self.telegram.send_log("Longing swing breakout.")
-                    longed = True
-                    sl = bars[1].low if bars[1].close > bars[1].open else bars[1].low - self.entry_6_atr_fac * atr_trail_mix
-                    self.open_new_position(entry=bars[0].close,
-                                           stop=sl,
-                                           open_positions=open_positions,
-                                           bars=bars,
-                                           direction=PositionDirection.LONG,
-                                           ExecutionType = "Market")
-
-            if foundSwingLow and foundSwingHigh and not shorted and not alreadyShorted and not alreadyLonged and self.shortsAllowed:
-                condition_2 = bars[1].open > self.ta_data_trend_strat.ema_w
-                condition_10 = (bars[1].high - bars[1].low) < atr
-                if bars[1].close < bars[idxSwingLow].low and condition_2 and condition_10:
-                    self.logger.info("Shorting swing break.")
-                    if self.telegram is not None:
-                        self.telegram.send_log("Shorting swing break.")
-                    shorted = True
-                    self.open_new_position(entry=bars[0].close,
-                                              stop=max(bars[1].high, bars[2].high),
-                                              open_positions=open_positions,
-                                              bars=bars,
-                                              direction=PositionDirection.SHORT,
-                                              ExecutionType = "Market")
-
-        # short entry 7
-        if self.entry_7 and not shorted and self.shortsAllowed:
-            condition_1 = bars[2].high > bars[1].high
-            condition_2 = bars[2].high > self.ta_strat_one.taData_strat_one.h_highs_trail_vec[-3]
-            condition_3 = abs(bars[1].close-bars[1].open) > abs(bars[1].close - bars[1].low)
-            condition_5 = bars[2].high - max(bars[2].close,bars[2].open) > abs(bars[2].close - bars[2].open)
-            condition_10 = not market_trending
-            if condition_1 and condition_2 and condition_3 and condition_5 and condition_10:
-                self.logger.info("Shorting 4H SFP")
-                if self.telegram is not None:
-                    self.telegram.send_log("Shorting 4H SFP")
-                shorted = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=max(bars[2].high, bars[1].high, bars[3].high),
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
-
-        # short entry 8
-        if self.entry_8 and not shorted and self.shortsAllowed:
-            condition_1 = (bars[1].high > bars[2].high and
-                           bars[1].high > bars[3].high and
-                           bars[1].high > bars[4].high and
-                           bars[1].high > bars[5].close and
-                           bars[1].high > bars[6].close and
-                           bars[1].open > bars[7].close and
-                           bars[1].open > bars[8].close)
-            condition_2 = (bars[2].close > bars[1].close and
-                           bars[3].close > bars[1].close and
-                           bars[4].close > bars[1].close and
-                           bars[5].close > bars[1].close and
-                           bars[6].close > bars[1].close and
-                           bars[7].close > bars[1].close and
-                           bars[8].close > bars[1].close)
-            condition_4 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_8_vol_fac > self.ta_data_trend_strat.volume_4h
-            condition_5 = not market_bullish#market_bearish
-            condition_6 = self.ta_trend_strat.taData_trend_strat.marketDynamic == MarketDynamic.RANGING
-            if condition_1 and condition_2 and condition_4 and condition_6:# and condition_5:
-                self.logger.info("Shorting rapid sell-off")
-                if self.telegram is not None:
-                    self.telegram.send_log("Shorting rapid sell-off")
-                shorted = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[1].high,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
-
-        # short entry 9
-        if self.entry_9 and not shorted and self.shortsAllowed:
-            condition_1 = bars[1].low < self.ta_data_trend_strat.lows_trail_4h_vec[-2] < bars[1].close < bars[1].open
-            condition_2 = bars[1].open < bars[2].open
-            if middleband_vec is None or std_vec is None or len(middleband_vec) < 2 or len(std_vec) < 2:
-                condition_3 = False
-            else:
-                condition_3 = bars[1].close > middleband_vec[-2] - std_vec[-2] * self.entry_9_std
-            condition_5 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.entry_9_4h_rsi
-            condition_6 = not market_bullish#market_bearish
-            condition_7 = self.ta_trend_strat.taData_trend_strat.marketDynamic == MarketDynamic.RANGING
-            if condition_1 and condition_2 and condition_3 and condition_5 and condition_7:# and condition_6:
-                self.logger.info("Shorting short trail tap")
-                if self.telegram is not None:
-                    self.telegram.send_log("Shorting short trail tap")
-                shorted = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[1].high + self.entry_9_atr * atr,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.SHORT,
-                                       ExecutionType="Market")
-
-        if self.entry_11 and not longed and self.longsAllowed:
-            condition_1 = self.ta_data_trend_strat.volume_sma_4h_vec[-1] * self.entry_11_vol > self.ta_data_trend_strat.volume_4h
-            condition_2 = (bars[1].close - bars[1].open) > self.entry_11_atr * atr
-            condition_3 = natr_4h < self.entry_11_natr
-            #condition_4 = self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] < self.var_1
-            #condition_5 = self.ta_data_trend_strat.rsi_MA_vec[-1] > self.ta_data_trend_strat.rsi_MA_vec[-2]
-            if condition_1 and condition_2 and condition_3:# and condition_4:
-                self.logger.info("Longing momentum")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing momentum")
-                longed = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close - self.sl_atr_fac * atr,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Market")
-                self.logger.info("Sending additional long")
-                if self.telegram is not None:
-                    self.telegram.send_log("Sending additional long")
-                entry = bars[0].close - atr
-                self.open_new_position(entry=entry,
-                                       stop=entry - 2 * atr_min,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Limit")
-
-        if self.entry_12 and not longed and self.longsAllowed:
-            condition_1 = (bars[4].open - bars[4].close) > self.entry_12_atr * self.ta_data_trend_strat.atr_4h_vec[-4]
-            condition_3 = bars[2].open < bars[4].open > bars[2].low > bars[4].low
-            condition_4 = bars[4].low < bars[1].low < bars[4].open > bars[1].open > bars[4].low and bars[4].open > bars[1].close
-            condition_6 = self.entry_12_max_rsi_4h < self.ta_trend_strat.taData_trend_strat.rsi_d or self.ta_trend_strat.taData_trend_strat.rsi_4h_vec[-1] > self.entry_12_rsi_4h
-            condition_10 = self.ta_data_trend_strat.volume_sma_4h_vec[-4] * self.entry_12_vol > talibbars.volume[-3]
-            condition_8 = not market_trending #or self.var_1
-            if condition_1 and condition_3 and condition_4 and condition_6 and condition_10 and condition_8:
-                self.logger.info("Longing reversal")
-                if self.telegram is not None:
-                    self.telegram.send_log("Longing reversal.")
-                longed = True
-                self.open_new_position(entry=bars[0].close,
-                                       stop=bars[0].close - self.sl_atr_fac * atr_min,
-                                       open_positions=open_positions,
-                                       bars=bars,
-                                       direction=PositionDirection.LONG,
-                                       ExecutionType="Market")
+        longed = execution_context.longed
+        shorted = execution_context.shorted
 
         if not self.longsAllowed:
             self.logger.info("Longs not allowed.")
@@ -694,72 +314,6 @@ class StrategyOne(TrendStrategy):
             self.logger.info("No new entries for now.")
             if self.telegram is not None:
                 self.telegram.send_log("No new entries for now.")
-
-    def calc_entry_and_exit(self, bars):
-        # find swing highs and lows
-        depth = 40
-        foundSwingHigh = False
-        foundSwingLow = False
-        idxSwingHigh = 0
-        idxSwingLow = 0
-        for i in range(3, depth):
-            condition_1 = bars[i + 2].close < bars[i].close
-            condition_2 = bars[i + 1].close < bars[i].close
-            condition_3 = bars[i-2].close < bars[i].close > bars[i - 1].close
-            condition_5 = bars[i + 3].close < bars[i].close
-            if condition_1 and condition_2 and condition_3 and condition_5:
-                foundSwingHigh = True
-                idxSwingHigh = i
-                break
-
-        if foundSwingHigh:
-            high_values = [bar.close for bar in bars[1:idxSwingHigh]]
-            alreadyLonged = any(high > bars[idxSwingHigh].close for high in high_values)
-        else:
-            alreadyLonged = True
-
-        for i in range(5, depth):
-            cond_1 = bars[i + 2].close > bars[i + 1].close
-            cond_2 = bars[i + 1].close > bars[i].close
-            cond_3 = bars[i - 2].close > bars[i].close < bars[i - 1].close
-            if cond_1 and cond_2 and cond_3:
-                foundSwingLow = True
-                idxSwingLow = i
-                break
-        if foundSwingLow:
-            low_values = [bar.close for bar in bars[1:idxSwingLow]]
-            alreadyShorted = any(low < bars[idxSwingLow].close for low in low_values)
-        else:
-            alreadyShorted = True
-
-        if foundSwingHigh and not alreadyLonged and foundSwingLow and not alreadyShorted:
-            # Calculate potential trade entries
-            longEntry = self.symbol.normalizePrice(bars[idxSwingHigh].high+self.ta_data_trend_strat.atr_4h*0.05, roundUp=True)
-            shortEntry = self.symbol.normalizePrice(bars[idxSwingLow].low-self.ta_data_trend_strat.atr_4h*0.05, roundUp=False)
-
-            # Calculate stops
-            stopLong = longEntry - self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
-            stopShort = shortEntry + self.ta_data_trend_strat.atr_4h * self.sl_atr_fac
-
-            stopLong = self.symbol.normalizePrice(stopLong, roundUp=False)
-            stopShort = self.symbol.normalizePrice(stopShort, roundUp=True)
-
-            # amount
-            expectedEntrySlippagePer = 0.0015 if self.limit_entry_offset_perc is None else 0
-            expectedExitSlippagePer = 0.0015
-            longAmount = self.calc_pos_size(risk=self.risk_factor, exitPrice=stopLong * (1 - expectedExitSlippagePer),
-                                            entry=longEntry * (1 + expectedEntrySlippagePer), atr=0)
-            shortAmount = self.calc_pos_size(risk=self.risk_factor, exitPrice=stopShort * (1 + expectedExitSlippagePer),
-                                             entry=shortEntry * (1 - expectedEntrySlippagePer), atr=0)
-        else:
-            longEntry = None
-            shortEntry = None
-            stopLong = None
-            stopShort = None
-            longAmount = None
-            shortAmount = None
-
-        return longEntry, shortEntry, stopLong, stopShort, longAmount, shortAmount, alreadyLonged, alreadyShorted
 
     def constant_trail(self, periodStart, periodEnd, trail):
         is_constant = True

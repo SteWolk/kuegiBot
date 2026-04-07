@@ -92,6 +92,24 @@ Once the bot is created and set up, call
 ```b= BackTest(bot,bars).run()```
 this runs the backtest and prints some performance numbers into the logs. 
 
+## development gates
+
+Use the unified gate runner before merging changes:
+
+```bash
+py -3 codex/dev_gate.py
+```
+
+Quick mode runs:
+- quality checks on changed Python files
+- parity regression on a fast baseline scenario in both indicator modes
+
+For full parity baseline scenarios:
+
+```bash
+py -3 codex/dev_gate.py --full-parity
+```
+
 i mainly use the "rel:" number which is the relation between profit (per year) and the maxDD.
 i consider a relation of greater than 4 a good performance. but you need to decide for yourself
 

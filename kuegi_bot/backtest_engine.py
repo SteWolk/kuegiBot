@@ -9,7 +9,6 @@ import plotly.graph_objects as go
 
 #import plotly.express as px
 from typing import List
-from datetime import datetime
 
 from kuegi_bot.bots.trading_bot import TradingBot, PositionDirection
 from kuegi_bot.utils.trading_classes import OrderInterface, Bar, Account, Order, Symbol, AccountPosition, \
@@ -36,7 +35,7 @@ class SilentLogger(object):
 class BackTest(OrderInterface):
 
     def __init__(self, bot: TradingBot, bars: list, funding: dict = None, symbol: Symbol = None,
-                 market_slipage_percent=0.15):
+                 market_slipage_percent=0.15, early_stop_config: dict = None):
         self.bars: List[Bar] = bars
         self.funding = funding
         self.firstFunding = 9999999999
@@ -49,6 +48,8 @@ class BackTest(OrderInterface):
         self.logger = bot.logger
         self.bot = bot
         self.bot.prepare(SilentLogger(), self)
+        if hasattr(self.bot, "set_backtest_bars"):
+            self.bot.set_backtest_bars(self.bars)
 
         self.market_slipage_percent = market_slipage_percent
         # Fallback defaults in fractional rates (e.g. 0.00055 = 0.055%)
@@ -86,6 +87,10 @@ class BackTest(OrderInterface):
         self.dd_vec = []
         self.maxDD_vec = []
         self.wallet_equity_vec = []
+        self.early_stop_config = dict(early_stop_config) if isinstance(early_stop_config, dict) else {}
+        self.early_stopped = False
+        self.early_stop_reason = None
+        self.last_processed_bar = None
         self.reset()
 
     def _normalize_fee_rate(self, rate, field_name: str) -> float:
@@ -130,11 +135,17 @@ class BackTest(OrderInterface):
         self.ll_vec = []
         self.dd_vec = []
         self.wallet_equity_vec = []
+        self.early_stopped = False
+        self.early_stop_reason = None
+        self.last_processed_bar = None
         self.bot.reset()
+        if hasattr(self.bot, "set_backtest_bars"):
+            self.bot.set_backtest_bars(self.bars)
 
         self.current_bars = []
         for b in self.bars:
             b.did_change = True
+            b.bot_data = {"indicators": {}}
         self.bot.init(self.bars[-self.bot.min_bars_needed():], self.account, self.symbol, None)
 
     # implementing OrderInterface
@@ -262,7 +273,12 @@ class BackTest(OrderInterface):
             loopbreak += 1
             another_round = False
             should_execute = False
-            for order in sorted(self.account.open_orders, key=self.orderKeyForSort):
+            orders = self.account.open_orders
+            if len(orders) <= 1:
+                iterable_orders = orders
+            else:
+                iterable_orders = sorted(orders, key=self.orderKeyForSort)
+            for order in iterable_orders:
                 if allowed_order_ids is not None and order.id not in allowed_order_ids:
                     continue
                 force_taker = False
@@ -307,13 +323,17 @@ class BackTest(OrderInterface):
 
     def handle_subbar(self, intrabarToCheck: Bar):
         self.current_bars[0].add_subbar(intrabarToCheck)  # so bot knows about the current intrabar
-        # first the ones that are there at the beginning
-        something_changed_on_existing_orders = self.check_executions(intrabarToCheck, False)
-        something_changed_on_second_pass = self.check_executions(intrabarToCheck, True)
-        # then the new ones with updated bar
-
-        if not something_changed_on_existing_orders and not something_changed_on_second_pass:  # no execution happened -> execute on tick now
+        if len(self.account.open_orders) == 0:
+            # No active orders to evaluate against this subbar, so we can directly tick once.
             self.bot.on_tick(self.current_bars, self.account)
+        else:
+            # first the ones that are there at the beginning
+            something_changed_on_existing_orders = self.check_executions(intrabarToCheck, False)
+            something_changed_on_second_pass = self.check_executions(intrabarToCheck, True)
+            # then the new ones with updated bar
+
+            if not something_changed_on_existing_orders and not something_changed_on_second_pass:  # no execution happened -> execute on tick now
+                self.bot.on_tick(self.current_bars, self.account)
 
         # update equity = balance + current value of open position
         avgEntry = self.account.open_position.avgEntryPrice
@@ -412,241 +432,383 @@ class BackTest(OrderInterface):
                 self.account.open_position.walletBalance -= funding_delta
                 self.cum_funding_for_dd += funding_delta
 
+    def _run_initial_plot_warmup(self, min_bars_needed: int):
+        for _idx in range(0, min_bars_needed):
+            self.write_plot_data()
+
+    def _process_backtest_bar(self, i: int):
+        self.current_bars = self.bars[-(i + 1):]
+        next_bar = self.bars[-i - 2]
+        forming_bar = Bar(
+            tstamp=next_bar.tstamp,
+            open=next_bar.open,
+            high=next_bar.open,
+            low=next_bar.open,
+            close=next_bar.open,
+            volume=0,
+            subbars=[],
+        )
+        self.current_bars.insert(0, forming_bar)
+        self.current_bars[0].did_change = True
+        self.current_bars[1].did_change = True
+
+        self.do_funding()
+        self.bot.on_tick(self.current_bars, self.account)
+        self.write_plot_data()
+
+        for subbar in reversed(next_bar.subbars):
+            if subbar.last_tick_tstamp < subbar.tstamp + 59:
+                subbar.last_tick_tstamp = subbar.tstamp + 59
+            self.handle_subbar(subbar)
+            self.current_bars[1].did_change = False
+
+        next_bar.bot_data = forming_bar.bot_data
+        for bar in self.current_bars:
+            if bar.did_change:
+                bar.did_change = False
+                continue
+            break
+        self.last_processed_bar = next_bar
+
+    def _current_profit_pct(self) -> float:
+        if self.initialEquity <= 0:
+            return 0.0
+        return 100.0 * (self.account.equity - self.initialEquity) / self.initialEquity
+
+    def _current_max_dd_pct(self) -> float:
+        if self.initialEquity <= 0 or len(self.maxDD_vec) == 0:
+            return 0.0
+        return 100.0 * self.maxDD_vec[-1] / self.initialEquity
+
+    def _current_closed_trades(self) -> int:
+        n_closed = 0
+        for pos in self.bot.position_history:
+            if pos.status == PositionStatus.CLOSED:
+                n_closed += 1
+        return n_closed
+
+    def _should_early_stop(self, processed_bars: int, total_bars: int) -> bool:
+        cfg = self.early_stop_config
+        if len(cfg) == 0:
+            return False
+
+        check_every = max(1, int(cfg.get("check_every", 1)))
+        if processed_bars % check_every != 0 and processed_bars < total_bars:
+            return False
+
+        min_bars = max(0, int(cfg.get("min_bars", 0)))
+        if processed_bars < min_bars:
+            return False
+
+        min_progress = float(cfg.get("min_progress", 0.0))
+        progress = (processed_bars / float(total_bars)) if total_bars > 0 else 1.0
+        if progress < min_progress:
+            return False
+
+        max_trades_closed = cfg.get("max_trades_closed")
+        if max_trades_closed is not None:
+            current_trades_closed = self._current_closed_trades()
+            if current_trades_closed >= int(max_trades_closed):
+                self.early_stopped = True
+                self.early_stop_reason = "trades_closed=%d reached threshold=%d" % (
+                    int(current_trades_closed),
+                    int(max_trades_closed),
+                )
+                return True
+
+        tiers = cfg.get("tiers", [])
+        if isinstance(tiers, list) and len(tiers) > 0:
+            active = []
+            for tier in tiers:
+                if not isinstance(tier, dict):
+                    continue
+                tier_progress = float(tier.get("min_progress", 0.0))
+                if progress >= tier_progress:
+                    active.append(tier)
+            if len(active) > 0:
+                active = sorted(active, key=lambda row: float(row.get("min_progress", 0.0)))
+                tier = active[-1]
+                tier_max_dd = tier.get("max_dd_pct")
+                if tier_max_dd is not None:
+                    current_dd_pct = self._current_max_dd_pct()
+                    if current_dd_pct < float(tier_max_dd):
+                        self.early_stopped = True
+                        self.early_stop_reason = "tier max_dd_pct=%.2f below threshold=%.2f at progress=%.3f" % (
+                            current_dd_pct,
+                            float(tier_max_dd),
+                            progress,
+                        )
+                        return True
+                tier_min_profit = tier.get("min_profit_pct")
+                if tier_min_profit is not None:
+                    current_profit_pct = self._current_profit_pct()
+                    if current_profit_pct < float(tier_min_profit):
+                        self.early_stopped = True
+                        self.early_stop_reason = "tier profit_pct=%.2f below threshold=%.2f at progress=%.3f" % (
+                            current_profit_pct,
+                            float(tier_min_profit),
+                            progress,
+                        )
+                        return True
+
+        max_dd_pct = cfg.get("max_dd_pct")
+        if max_dd_pct is not None:
+            current_dd_pct = self._current_max_dd_pct()
+            if current_dd_pct < float(max_dd_pct):
+                self.early_stopped = True
+                self.early_stop_reason = "max_dd_pct=%.2f below threshold=%.2f" % (
+                    current_dd_pct,
+                    float(max_dd_pct),
+                )
+                return True
+
+        min_profit_pct = cfg.get("min_profit_pct")
+        if min_profit_pct is not None:
+            current_profit_pct = self._current_profit_pct()
+            if current_profit_pct < float(min_profit_pct):
+                self.early_stopped = True
+                self.early_stop_reason = "profit_pct=%.2f below threshold=%.2f" % (
+                    current_profit_pct,
+                    float(min_profit_pct),
+                )
+                return True
+
+        return False
+
+    def _run_price_loop(self, min_bars_needed: int):
+        total_bars = max(1, len(self.bars) - min_bars_needed)
+        processed_bars = 0
+        for i in range(min_bars_needed, len(self.bars)):
+            if i == len(self.bars) - 1:
+                self.last_processed_bar = self.bars[0]
+                self.write_plot_data()
+                processed_bars += 1
+                if self._should_early_stop(processed_bars=processed_bars, total_bars=total_bars):
+                    break
+                continue
+            self._process_backtest_bar(i)
+            processed_bars += 1
+            if self._should_early_stop(processed_bars=processed_bars, total_bars=total_bars):
+                self.logger.info(
+                    "early stop: processed=%d/%d reason=%s",
+                    processed_bars,
+                    total_bars,
+                    str(self.early_stop_reason),
+                )
+                break
+
+    def _force_close_remaining_position(self):
+        if abs(self.account.open_position.quantity) <= self.symbol.lotSize / 10:
+            return
+        ref_bar = self.last_processed_bar if self.last_processed_bar is not None else self.bars[0]
+        if len(ref_bar.subbars) > 0:
+            close_bar = ref_bar.subbars[-1]
+        else:
+            close_bar = Bar(
+                tstamp=ref_bar.tstamp,
+                open=ref_bar.close,
+                high=ref_bar.close,
+                low=ref_bar.close,
+                close=ref_bar.close,
+                volume=0,
+                subbars=[],
+            )
+            close_bar.last_tick_tstamp = close_bar.tstamp + 59
+        self.send_order(Order(orderId="endOfTest", amount=-self.account.open_position.quantity))
+        self.handle_subbar(close_bar)
+
+    def _closed_positions_for_metrics(self):
+        closed_positions = []
+        for pos in self.bot.position_history:
+            if pos.status != PositionStatus.CLOSED:
+                continue
+            if pos.exit_tstamp is None:
+                pos.exit_tstamp = self.bars[-1].tstamp
+            closed_positions.append(pos)
+        return closed_positions
+
+    def _count_open_positions(self) -> int:
+        nmb = 0
+        for position in self.bot.open_positions.values():
+            if position.status == PositionStatus.OPEN:
+                nmb += 1
+        return nmb
+
+    def _compute_performance_metrics(self, n_closed: int):
+        final_equity = self.account.equity
+        profit = final_equity - self.initialEquity
+
+        first_ts = self.bars[0].tstamp
+        last_ts = self.bars[-1].tstamp
+        total_days = max(1e-9, abs(last_ts - first_ts) / (60 * 60 * 24))
+        max_dd = -self.maxDD_vec[-1]
+
+        if max_dd > 0 and final_equity != self.initialEquity:
+            rel = final_equity / max_dd
+        else:
+            rel = 0.0
+        rel_per_year = rel / (total_days / 365) if rel > 0 and total_days > 0 else 0.0
+
+        N0 = 100
+        if n_closed > 0:
+            trade_factor = math.sqrt(n_closed / (n_closed + N0))
+        else:
+            trade_factor = 0.0
+        rel_per_year_trades = rel_per_year * trade_factor
+
+        years = total_days / 365.0
+        if years > 0 and self.initialEquity > 0 and final_equity > 0:
+            cagr = (final_equity / self.initialEquity) ** (1.0 / years) - 1.0
+        else:
+            cagr = 0.0
+
+        if self.initialEquity > 0:
+            max_dd_frac = max_dd / self.initialEquity
+        else:
+            max_dd_frac = 0.0
+        if max_dd_frac > 0 and cagr > 0:
+            mar_ratio = cagr / max_dd_frac
+        else:
+            mar_ratio = 0.0
+
+        return {
+            "final_equity": final_equity,
+            "profit": profit,
+            "total_days": total_days,
+            "max_dd": max_dd,
+            "rel_per_year": rel_per_year,
+            "rel_per_year_trades": rel_per_year_trades,
+            "cagr": cagr,
+            "mar_ratio": mar_ratio,
+        }
+
+    def _compute_trade_statistics(self, closed_positions: list):
+        trade_R = []
+        wins = 0
+        losses = 0
+        win_sum = 0.0
+        loss_sum = 0.0
+
+        for pos in closed_positions:
+            if pos.filled_entry is None or pos.filled_exit is None:
+                continue
+            if pos.max_filled_amount == 0:
+                continue
+
+            entry = pos.filled_entry
+            exit_ = pos.filled_exit
+            if pos.max_filled_amount > 0:
+                r = (exit_ - entry) / entry
+            else:
+                r = (entry - exit_) / entry
+
+            trade_R.append(r)
+            if r > 0:
+                wins += 1
+                win_sum += r
+            elif r < 0:
+                losses += 1
+                loss_sum += r
+
+        if len(trade_R) >= 2:
+            mean_R = sum(trade_R) / len(trade_R)
+            var_R = sum((r - mean_R) ** 2 for r in trade_R) / (len(trade_R) - 1)
+            std_R = math.sqrt(var_R) if var_R > 0 else 0.0
+        elif len(trade_R) == 1:
+            mean_R = trade_R[0]
+            std_R = 0.0
+        else:
+            mean_R = 0.0
+            std_R = 0.0
+
+        if len(trade_R) > 0:
+            win_rate = wins / len(trade_R)
+        else:
+            win_rate = 0.0
+
+        if losses > 0:
+            profit_factor = -win_sum / loss_sum if loss_sum < 0 else 0.0
+        else:
+            profit_factor = float('inf') if wins > 0 else 0.0
+
+        if std_R > 0 and len(trade_R) > 1:
+            sqn = (mean_R / std_R) * math.sqrt(len(trade_R))
+        else:
+            sqn = 0.0
+
+        return {
+            "mean_R": mean_R,
+            "win_rate": win_rate,
+            "profit_factor": profit_factor,
+            "sqn": sqn,
+        }
+
+    def _log_backtest_summary(self, n_closed: int, nmb: int, performance: dict, trade_stats: dict):
+        self.logger.info(
+            "trades: " + str(n_closed)
+            + " | open pos: " + str(nmb)
+            + " | profit: " + ("%.2f" % (100 * performance["profit"] / self.initialEquity)) + "%"
+            + " | unreal.: " + ("%.1f" % (100 * self.unrealized_equity_vec[-1] / self.initialEquity)) + "%"
+            + " | maxDD: " + ("%.2f" % (100 * self.maxDD_vec[-1] / self.initialEquity)) + "%"
+            + " | maxExp: " + ("%.1f" % (100 * self.maxExposure / self.initialEquity)) + "%"
+            + " | relY_final: " + ("%.2f" % (performance["rel_per_year"]))
+            + " | relY_final_trades: " + ("%.2f" % (performance["rel_per_year_trades"]))
+            + " | CAGR: " + ("%.2f" % (100 * performance["cagr"])) + "%"
+            + " | MAR: " + ("%.2f" % (performance["mar_ratio"]))
+            + " | winrate: " + ("%.1f" % (100 * trade_stats["win_rate"])) + "%"
+            + " | avgR: " + ("%.3f" % (trade_stats["mean_R"]))
+            + " | PF: " + ("%.2f" % (trade_stats["profit_factor"] if trade_stats["profit_factor"] != float('inf') else 0.0))
+            + " | SQN_trades: " + ("%.2f" % (trade_stats["sqn"]))
+        )
+
+    def _finalize_metrics(self):
+        if len(self.bot.position_history) == 0:
+            self.logger.info("finished with no trades")
+            self.metrics = None
+            return
+
+        closed_positions = self._closed_positions_for_metrics()
+        n_closed = len(closed_positions)
+        nmb = self._count_open_positions()
+        performance = self._compute_performance_metrics(n_closed)
+        trade_stats = self._compute_trade_statistics(closed_positions)
+        self._log_backtest_summary(n_closed, nmb, performance, trade_stats)
+
+        self.metrics = {
+            "symbol": getattr(self.symbol, "symbol", None) if hasattr(self, "symbol") else None,
+            "timeframe_minutes": None,
+            "trades_closed": n_closed,
+            "open_positions": nmb,
+            "initial_equity": self.initialEquity,
+            "final_equity": performance["final_equity"],
+            "profit_abs": performance["profit"],
+            "profit_pct": 100.0 * performance["profit"] / self.initialEquity if self.initialEquity > 0 else 0.0,
+            "max_drawdown_abs": performance["max_dd"],
+            "max_drawdown_pct": 100.0 * self.maxDD_vec[-1] / self.initialEquity if self.initialEquity > 0 else 0.0,
+            "max_exposure_abs": self.maxExposure,
+            "max_exposure_pct": 100.0 * self.maxExposure / self.initialEquity if self.initialEquity > 0 else 0.0,
+            "total_days": performance["total_days"],
+            "relY_final": performance["rel_per_year"],
+            "relY_final_trades": performance["rel_per_year_trades"],
+            "cagr": performance["cagr"],
+            "mar": performance["mar_ratio"],
+            "winrate": trade_stats["win_rate"],
+            "avg_R": trade_stats["mean_R"],
+            "profit_factor": trade_stats["profit_factor"],
+            "sqn_trades": trade_stats["sqn"],
+        }
+
     def run(self):
         self.reset()
         self.logger.info(
             "starting backtest with " + str(len(self.bars)) + " bars and " + str(self.account.equity) + " equity")
-        for i in range(0, self.bot.min_bars_needed()):
-            self.write_plot_data()
-        for i in range(self.bot.min_bars_needed(), len(self.bars)):
-            if i == len(self.bars) - 1:# or i < self.bot.min_bars_needed():
-                self.write_plot_data()
-                continue  # ignore last bar and first x
-
-            # slice bars. TODO: also slice intrabar to simulate tick
-            self.current_bars = self.bars[-(i + 1):]
-            # add one bar with 1 tick on open to show to bot that the old one is closed
-            next_bar = self.bars[-i - 2]
-            forming_bar = Bar(tstamp=next_bar.tstamp, open=next_bar.open, high=next_bar.open,
-                              low=next_bar.open, close=next_bar.open,
-                              volume=0, subbars=[])
-            self.current_bars.insert(0, forming_bar)
-            self.current_bars[0].did_change = True
-            self.current_bars[1].did_change = True
-
-            self.do_funding()
-            self.bot.on_tick(self.current_bars, self.account)  # tick on new bar open cause many strats act on that
-            self.write_plot_data()
-            for subbar in reversed(next_bar.subbars):
-                # check open orders & update account
-                # ensure correct last tick (must not be the same as tstamp)
-                if subbar.last_tick_tstamp < subbar.tstamp + 59:
-                    subbar.last_tick_tstamp = subbar.tstamp + 59
-                self.handle_subbar(subbar)
-                self.current_bars[1].did_change = False
-
-            next_bar.bot_data = forming_bar.bot_data
-            for b in self.current_bars:
-                if b.did_change:
-                    b.did_change = False
-                else:
-                    break  # no need to go further
-
-        if abs(self.account.open_position.quantity) > self.symbol.lotSize / 10:
-            self.send_order(Order(orderId="endOfTest", amount=-self.account.open_position.quantity))
-            self.handle_subbar(self.bars[0].subbars[-1])
-
-        if len(self.bot.position_history) > 0:
-            daysInPos = 0
-            maxDays = 0
-            minDays = None
-            n_closed = 0
-
-            for pos in self.bot.position_history:
-                if pos.status != PositionStatus.CLOSED:
-                    continue
-                if pos.exit_tstamp is None:
-                    pos.exit_tstamp = self.bars[-1].tstamp
-
-                d = pos.daysInPos()
-                daysInPos += d
-                maxDays = max(maxDays, d)
-                minDays = d if minDays is None else min(minDays, d)
-                n_closed += 1
-
-            if n_closed > 0:
-                daysInPos /= n_closed
-            else:
-                daysInPos = 0
-                maxDays = 0
-                minDays = 0
-
-            nmb = 0
-            for position in self.bot.open_positions.values():
-                if position.status == PositionStatus.OPEN:
-                    nmb += 1
-
-            # --- final equity and time span ---
-            final_equity = self.account.equity
-            profit = final_equity - self.initialEquity
-
-            first_ts = self.bars[0].tstamp
-            last_ts = self.bars[-1].tstamp
-            total_days = max(1e-9,abs(last_ts - first_ts) / (60 * 60 * 24))
-
-            # --- max drawdown magnitude (positive number) ---
-            max_dd = -self.maxDD_vec[-1]  # self.maxDD_vec values are negative
-
-            if max_dd > 0 and final_equity != self.initialEquity:
-                rel = final_equity / max_dd
-            else:
-                rel = 0.0
-
-            rel_per_year = rel / (total_days / 365) if rel > 0 and total_days > 0 else 0.0
-
-            # --- trade-count adjustment ---
-            n_closed = 0
-            for pos in self.bot.position_history:
-                if pos.status == PositionStatus.CLOSED:
-                    n_closed += 1
-
-            N0 = 100  # trades needed to get ~70% of full weight; tune as you like
-
-            if n_closed > 0:
-                trade_factor = math.sqrt(n_closed / (n_closed + N0))
-            else:
-                trade_factor = 0.0
-
-            rel_per_year_trades = rel_per_year * trade_factor
-
-            # --- CAGR (annualized return) ---
-            years = total_days / 365.0
-            if years > 0 and self.initialEquity > 0 and final_equity > 0:
-                cagr = (final_equity / self.initialEquity) ** (1.0 / years) - 1.0
-            else:
-                cagr = 0.0
-
-            # --- MAR / Calmar ratio: CAGR / max drawdown (fraction) ---
-            if self.initialEquity > 0:
-                max_dd_frac = max_dd / self.initialEquity
-            else:
-                max_dd_frac = 0.0
-
-            if max_dd_frac > 0 and cagr > 0:
-                mar_ratio = cagr / max_dd_frac
-            else:
-                mar_ratio = 0.0
-
-            # --- Trade-based stats (R-multiples on price) ---
-            trade_R = []
-            wins = 0
-            losses = 0
-            win_sum = 0.0
-            loss_sum = 0.0
-
-            for pos in self.bot.position_history:
-                if pos.status != PositionStatus.CLOSED:
-                    continue
-                if pos.filled_entry is None or pos.filled_exit is None:
-                    continue
-                if pos.max_filled_amount == 0:
-                    continue
-
-                entry = pos.filled_entry
-                exit_ = pos.filled_exit
-
-                # Long vs short R on price
-                if pos.max_filled_amount > 0:
-                    r = (exit_ - entry) / entry
-                else:
-                    r = (entry - exit_) / entry
-
-                trade_R.append(r)
-                if r > 0:
-                    wins += 1
-                    win_sum += r
-                elif r < 0:
-                    losses += 1
-                    loss_sum += r
-
-            if len(trade_R) >= 2:
-                mean_R = sum(trade_R) / len(trade_R)
-                var_R = sum((r - mean_R) ** 2 for r in trade_R) / (len(trade_R) - 1)
-                std_R = math.sqrt(var_R) if var_R > 0 else 0.0
-            elif len(trade_R) == 1:
-                mean_R = trade_R[0]
-                std_R = 0.0
-            else:
-                mean_R = 0.0
-                std_R = 0.0
-
-            if len(trade_R) > 0:
-                win_rate = wins / len(trade_R)
-            else:
-                win_rate = 0.0
-
-            if wins > 0:
-                avg_win_R = win_sum / wins
-            else:
-                avg_win_R = 0.0
-
-            if losses > 0:
-                avg_loss_R = loss_sum / losses  # this is negative
-                profit_factor = -win_sum / loss_sum if loss_sum < 0 else 0.0
-            else:
-                avg_loss_R = 0.0
-                profit_factor = float('inf') if wins > 0 else 0.0
-
-            # --- SQN-like metric: Sharpe-style but on trades, not time ---
-            if std_R > 0 and len(trade_R) > 1:
-                sqn = (mean_R / std_R) * math.sqrt(len(trade_R))
-            else:
-                sqn = 0.0
-
-            self.logger.info(
-                "trades: " + str(n_closed)
-                + " | open pos: " + str(nmb)
-                + " | profit: " + ("%.1f" % (100 * profit / self.initialEquity)) + "%"
-                + " | unreal.: " + ("%.1f" % (100 * self.unrealized_equity_vec[-1] / self.initialEquity)) + "%"
-                + " | maxDD: " + ("%.1f" % (100 * self.maxDD_vec[-1] / self.initialEquity)) + "%"
-                + " | maxExp: " + ("%.1f" % (100 * self.maxExposure / self.initialEquity)) + "%"
-                + " | relY_final: " + ("%.2f" % (rel_per_year))
-                + " | relY_final_trades: " + ("%.2f" % (rel_per_year_trades))
-                + " | CAGR: " + ("%.2f" % (100 * cagr)) + "%"
-                + " | MAR: " + ("%.2f" % (mar_ratio))
-                + " | winrate: " + ("%.1f" % (100 * win_rate)) + "%"
-                + " | avgR: " + ("%.3f" % (mean_R))
-                + " | PF: " + ("%.2f" % (profit_factor if profit_factor != float('inf') else 0.0))
-                + " | SQN_trades: " + ("%.2f" % (sqn))
-            )
-
-            # --- store metrics on the BackTest instance for later export ---
-            self.metrics = {
-                "symbol": getattr(self.symbol, "symbol", None) if hasattr(self, "symbol") else None,
-                "timeframe_minutes": None,  # you can fill this from your BackTest init if you store it
-                "trades_closed": n_closed,
-                "open_positions": nmb,
-                "initial_equity": self.initialEquity,
-                "final_equity": final_equity,
-                "profit_abs": profit,
-                "profit_pct": 100.0 * profit / self.initialEquity if self.initialEquity > 0 else 0.0,
-                "max_drawdown_abs": max_dd,
-                "max_drawdown_pct": 100.0 * self.maxDD_vec[-1] / self.initialEquity if self.initialEquity > 0 else 0.0,
-                "max_exposure_abs": self.maxExposure,
-                "max_exposure_pct": 100.0 * self.maxExposure / self.initialEquity if self.initialEquity > 0 else 0.0,
-                "total_days": total_days,
-                "relY_final": rel_per_year,
-                "relY_final_trades": rel_per_year_trades,
-                "cagr": cagr,
-                "mar": mar_ratio,
-                "winrate": win_rate,
-                "avg_R": mean_R,
-                "profit_factor": profit_factor,
-                "sqn_trades": sqn,
-            }
-        else:
-            self.logger.info("finished with no trades")
-            self.metrics = None  # no trades, nothing to export
+        min_bars_needed = self.bot.min_bars_needed()
+        self._run_initial_plot_warmup(min_bars_needed)
+        self._run_price_loop(min_bars_needed)
+        if self.early_stopped:
+            self.logger.info("backtest stopped early: %s", str(self.early_stop_reason))
+        self._force_close_remaining_position()
+        self._finalize_metrics()
         return self
 
     def plot_equity_stats(self):

@@ -11,6 +11,28 @@ from kuegi_bot.utils.trading_classes import Position, Bar, Symbol
 from kuegi_bot.indicators.indicator import Indicator, calc_atr
 
 
+def _entry_execution_type(position) -> str:
+    if position is None:
+        return ""
+    return str(getattr(position, "entry_execution_type", "") or "").lower()
+
+
+def _is_delayed_entry_type(position) -> bool:
+    # Delayed entries can trigger intra-bar, so the entry bar may include
+    # pre-entry price action that must not be used for stop trailing logic.
+    return _entry_execution_type(position) in {"limit", "stoplimit", "stoploss"}
+
+
+def _has_closed_bar_after_entry(bars, position) -> bool:
+    if position is None or len(bars) < 2:
+        return False
+    entry_t = getattr(position, "entry_tstamp", None)
+    if entry_t is None:
+        return False
+    # bars[1] is the latest fully closed bar at the first tick of a new bar.
+    return bars[1].tstamp > entry_t
+
+
 class ExitModule:
     def __init__(self):
         self.logger = None
@@ -186,50 +208,62 @@ class TimedExit(ExitModule):
         self.atrPeriod = atrPeriod
         self.longs_min_to_breakeven = longs_min_to_breakeven
         self.shorts_min_to_breakeven = shorts_min_to_breakeven
-        self._last_bar_tstamp = None
+        self._last_bar_tstamp_by_pos = {}
 
     def init(self, logger,symbol):
         super().init(logger,symbol)
         self.logger.info(vars(self))
         #self.logger.info(f"init timedExit with {self.longs_min_to_exit}, {self.atrPeriod}")
 
+    def _short_breakeven_gate_since_entry(self, bars, position) -> bool:
+        if position is None or position.wanted_entry is None or len(bars) < 2:
+            return False
+        entry = position.wanted_entry
+        # Use the last fully closed bar, not the opening tick of the current bar.
+        return bars[1].close < entry
+
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
         # determine new bar by timestamp
         current_t = bars[0].tstamp
-        is_new_bar = (current_t != self._last_bar_tstamp)
+        pos_key = position.id if position is not None else "__none__"
+        last_t = self._last_bar_tstamp_by_pos.get(pos_key)
+        is_new_bar = (current_t != last_t)
         current_stop = order.trigger_price
 
         if is_new_bar:
-            self._last_bar_tstamp = current_t
+            self._last_bar_tstamp_by_pos[pos_key] = current_t
             self.logger.info(
                 f"[TimedExit] is_new_bar=True at t={bars[0].tstamp}, "
                 f"open={bars[0].open}, close={bars[0].close}"
             )
             current_tstamp = bars[0].last_tick_tstamp if bars[0].last_tick_tstamp is not None else bars[0].tstamp
+            if _is_delayed_entry_type(position) and not _has_closed_bar_after_entry(bars, position):
+                return
+            close_ref = bars[1].close if len(bars) > 1 else bars[0].close
             if current_tstamp > position.entry_tstamp + self.longs_min_to_exit*60:
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
-                    if bars[0].close < position.wanted_entry > current_stop:
+                    if close_ref < position.wanted_entry > current_stop:
                         order.trigger_price = position.wanted_entry
                         self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.longs_min_to_breakeven*60:
                 if position.amount > 0 and order.trigger_price < position.wanted_entry:       # longs
-                    if bars[0].close > position.wanted_entry > current_stop:
+                    if close_ref > position.wanted_entry > current_stop:
                         order.trigger_price = position.wanted_entry
                         self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.shorts_min_to_exit * 60:
                 if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
-                    if bars[0].close > position.wanted_entry < current_stop:
+                    if close_ref > position.wanted_entry < current_stop:
                         order.trigger_price = position.wanted_entry
                         self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
 
             if current_tstamp > position.entry_tstamp + self.shorts_min_to_breakeven*60:
                 if position.amount < 0 and (order.trigger_price > position.wanted_entry):       # shorts
-                    if bars[0].open < position.wanted_entry < current_stop:
+                    if self._short_breakeven_gate_since_entry(bars, position) and position.wanted_entry < current_stop:
                         order.trigger_price = position.wanted_entry
                         self.logger.info("Setting to break even. Order.ID: %s, %.1f" % (order.id, position.wanted_entry))
                         to_update.append(order)
@@ -402,7 +436,7 @@ class ATRrangeSL(ExitModule):
         self.shortRangefacSL = shortRangefacSL
         self.rangeATRfactor = rangeATRfactor
         self.atrPeriod = atrPeriod
-        self._last_bar_tstamp = None
+        self._last_bar_tstamp_by_pos = {}
 
     def init(self, logger,symbol):
         super().init(logger,symbol)
@@ -413,9 +447,11 @@ class ATRrangeSL(ExitModule):
         # determine new bar by timestamp
         current_t = bars[0].tstamp
         open_t = position.entry_tstamp
-        is_new_bar = (current_t != self._last_bar_tstamp)
+        pos_key = position.id if position is not None else "__none__"
+        last_t = self._last_bar_tstamp_by_pos.get(pos_key)
+        is_new_bar = (current_t != last_t)
         if is_new_bar:
-            self._last_bar_tstamp = current_t
+            self._last_bar_tstamp_by_pos[pos_key] = current_t
             self.logger.info(
                 f"[ATRrangeSL] is_new_bar=True at t={bars[0].tstamp}, "
                 f"open={bars[0].open}, close={bars[0].close}"
@@ -430,13 +466,15 @@ class ATRrangeSL(ExitModule):
         direction = 1 if position.amount > 0 else -1
 
         if direction == 1:
-            if current_stop >= entry and not is_new_bar or open_t > bars[0].tstamp:
+            if (current_stop >= entry and not is_new_bar) or (open_t > bars[0].tstamp):
                 skip_trailing = True
         else:
-            if current_stop <= entry and not is_new_bar:
+            if (current_stop <= entry and not is_new_bar) or (open_t > bars[0].tstamp):
                 skip_trailing = True
 
         if not skip_trailing:
+            if _is_delayed_entry_type(position) and not _has_closed_bar_after_entry(bars, position):
+                return
             ep = bars[1].high if position.amount > 0 else bars[1].low
             newStop = order.trigger_price
             atrId = "ATR_" + str(self.atrPeriod)

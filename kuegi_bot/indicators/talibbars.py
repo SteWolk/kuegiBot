@@ -39,6 +39,10 @@ class TAlibBars(Indicator):
             self.low = np.append(self.low, bars[1].low)
             self.open = np.append(self.open, bars[1].open)
             self.volume = np.append(self.volume, bars[1].volume)
+            if self.timestamps is None:
+                self.timestamps = np.array([bars[1].tstamp], dtype=np.int64)
+            else:
+                self.timestamps = np.append(self.timestamps, int(bars[1].tstamp))
 
             self._update_daily_candles(bars[1].tstamp)
             self._update_weekly_candles(bars[1].tstamp)
