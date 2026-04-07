@@ -440,7 +440,10 @@ class TATrendStrategyIndicator(Indicator):
         oi_4h_vec = np.full(self.max_4h_period, np.nan, dtype=float)
         if ts_arr is not None and len(ts_arr) >= self.max_4h_period:
             oi_4h_vec = self.lookup_open_interest(np.asarray(ts_arr[-self.max_4h_period :], dtype=np.int64))
-        oi_sma_4h_vec = talib.MA(oi_4h_vec, self.oi_4h_sma_period, 0)
+        if np.any(np.isfinite(oi_4h_vec)):
+            oi_sma_4h_vec = talib.MA(oi_4h_vec, self.oi_4h_sma_period, 0)
+        else:
+            oi_sma_4h_vec = np.full_like(oi_4h_vec, np.nan, dtype=float)
 
         self.taData_trend_strat.oi_4h_vec = oi_4h_vec
         self.taData_trend_strat.oi_sma_4h_vec = oi_sma_4h_vec

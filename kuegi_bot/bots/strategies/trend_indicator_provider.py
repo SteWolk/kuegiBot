@@ -216,7 +216,10 @@ class PrecomputedTrendIndicatorProvider(TrendIndicatorProvider):
         self._rsi_4h = talib.RSI(self._close, indicator.rsi_4h_period)
         self._volume_sma = talib.MA(self._volume, indicator.volume_sma_4h_period, 0)
         self._oi = indicator.lookup_open_interest(self._timestamps)
-        self._oi_sma = talib.MA(self._oi, indicator.oi_4h_sma_period, 0)
+        if np.any(np.isfinite(self._oi)):
+            self._oi_sma = talib.MA(self._oi, indicator.oi_4h_sma_period, 0)
+        else:
+            self._oi_sma = np.full_like(self._oi, np.nan, dtype=float)
         self._funding = indicator.lookup_funding(self._timestamps)
         self._adx = talib.ADX(self._high, self._low, self._close, 35)
         self._plus_di = talib.PLUS_DI(self._high, self._low, self._close, 35)
