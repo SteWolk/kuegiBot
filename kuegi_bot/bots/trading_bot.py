@@ -42,6 +42,7 @@ class TradingBot:
         self.position_history: List[Position] = []
         self.open_position_rolling = 1
         self.unaccounted_position_cool_off = 0
+        self._backtest_bars: List[Bar] = None
         self.reset()
 
     def uid(self) -> str:
@@ -72,6 +73,9 @@ class TradingBot:
         self.read_open_positions(bars)
         self.sync_connected_orders(account)
         self.sync_positions_with_open_orders(bars, account)
+
+    def set_backtest_bars(self, bars: List[Bar]):
+        self._backtest_bars = bars
 
     ############### ids of pos, signal and order
 
@@ -215,6 +219,8 @@ class TradingBot:
         position.current_open_amount += amount
 
     def sync_connected_orders(self, account: Account):
+        if len(self.open_positions) == 0 and len(account.open_orders) == 0:
+            return
         # update connected orders in position
         for pos in self.open_positions.values():
             pos.connectedOrders = []  # will be filled now
@@ -281,7 +287,16 @@ class TradingBot:
                 else:
                     self.logger.warn("no position found on execution of " + order.id)
 
-        self.known_order_history = len(account.order_history)
+        current_order_history = len(account.order_history)
+        # In backtests, account/position state is deterministic and internally consistent.
+        # Avoid the expensive full sync on every intrabar tick when nothing changed.
+        is_backtest = self._backtest_bars is not None
+        has_new_execution = current_order_history != self.known_order_history
+        should_skip_full_sync = is_backtest and not changed and not self.is_new_bar and not has_new_execution
+        if should_skip_full_sync:
+            return
+
+        self.known_order_history = current_order_history
         self.sync_positions_with_open_orders(bars, account)
 
     def got_data_for_position_sync(self, bars: List[Bar]):
@@ -290,141 +305,136 @@ class TradingBot:
     def get_stop_for_unmatched_amount(self, amount: float, bars: List[Bar]):
         return None
 
-    def sync_positions_with_open_orders(self, bars: List[Bar], account: Account):
+    def _sum_open_position_amount(self) -> float:
         open_pos = 0
         for pos in self.open_positions.values():
             if pos.status == PositionStatus.OPEN:
                 open_pos += pos.current_open_amount
+        return open_pos
 
-        if not self.got_data_for_position_sync(bars):
-            self.logger.warn("got no initial data, can't sync positions")
-            self.unaccounted_position_cool_off = 0
-            return
-
+    def _collect_remaining_sync_entities(self, account: Account):
         remaining_pos_ids = []
         remaining_pos_ids += self.open_positions.keys()
         remaining_orders = []
         remaining_orders += account.open_orders
 
-        # first check if there even is a diparity (positions without stops, or orders without position)
         for order in account.open_orders:
             if not order.active:
                 remaining_orders.remove(order)
-                continue  # got cancelled during run
+                continue
             posId, orderType = self.position_id_and_type_from_order_id(order.id)
             if orderType is None:
                 remaining_orders.remove(order)
-                continue  # none of ours
+                continue
             if posId in self.open_positions.keys():
                 pos = self.open_positions[posId]
                 remaining_orders.remove(order)
                 if posId in remaining_pos_ids:
                     if (orderType == OrderType.SL and pos.status == PositionStatus.OPEN) \
-                            or (orderType == OrderType.ENTRY and pos.status in [PositionStatus.PENDING,
-                                                                                PositionStatus.TRIGGERED]):
-                        # only remove from remaining if its open with SL or pending with entry. every position needs
-                        # a stoploss!
+                            or (orderType == OrderType.ENTRY and pos.status in [PositionStatus.PENDING, PositionStatus.TRIGGERED]):
                         remaining_pos_ids.remove(posId)
 
         for pos in self.open_positions.values():
             self.check_open_orders_in_position(pos)
 
-        if len(remaining_orders) == 0 and len(remaining_pos_ids) == 0 and abs(
-                open_pos - account.open_position.quantity) < self.symbol.lotSize / 10:
-            self.unaccounted_position_cool_off = 0
-            return
+        return remaining_pos_ids, remaining_orders
 
-        self.logger.info("Has to start order/pos sync with bot vs acc: %.3f vs. %.3f and %i vs %i, remaining: %i,  %i"
-                         % (
-                             open_pos, account.open_position.quantity, len(self.open_positions),
-                             len(account.open_orders),
-                             len(remaining_orders), len(remaining_pos_ids)))
+    def _is_sync_aligned(self, open_pos: float, account: Account, remaining_orders: list, remaining_pos_ids: list) -> bool:
+        if len(remaining_orders) != 0:
+            return False
+        if len(remaining_pos_ids) != 0:
+            return False
+        delta = abs(open_pos - account.open_position.quantity)
+        return delta < self.symbol.lotSize / 10
 
+    def _compute_remaining_position_amount(self, account: Account) -> float:
         remainingPosition = account.open_position.quantity
         for pos in self.open_positions.values():
             if pos.status == PositionStatus.OPEN:
                 remainingPosition -= pos.current_open_amount
+        return remainingPosition
 
+    def _process_remaining_orders(self, remaining_orders: list, bars: List[Bar], remainingPosition: float):
         waiting_tps = []
-
-        # now remaining orders and remaining positions contain the not matched ones
         for order in remaining_orders:
             orderType = self.order_type_from_order_id(order.id)
             posId = self.position_id_from_order_id(order.id)
-            if not order.active:  # already canceled or executed
+            if not order.active:
                 continue
 
             if orderType == OrderType.ENTRY:
-                # add position for unkown order
                 stop = self.get_stop_for_unmatched_amount(order.amount, bars)
                 if stop is not None:
-                    newPos = Position(id=posId,
-                                      entry=order.limit_price if order.limit_price is not None else order.trigger_price,
-                                      amount=order.amount,
-                                      stop=stop,
-                                      tstamp=bars[0].tstamp)
+                    newPos = Position(
+                        id=posId,
+                        entry=order.limit_price if order.limit_price is not None else order.trigger_price,
+                        amount=order.amount,
+                        stop=stop,
+                        tstamp=bars[0].tstamp,
+                    )
                     newPos.status = PositionStatus.PENDING if not order.stop_triggered else PositionStatus.TRIGGERED
                     self.open_positions[posId] = newPos
-                    self.logger.warn("found unknown entry %s %.1f @ %.1f, added position"
-                                     % (order.id, order.amount,
-                                        order.trigger_price if order.trigger_price is not None else order.limit_price))
+                    self.logger.warn(
+                        "found unknown entry %s %.1f @ %.1f, added position"
+                        % (order.id, order.amount, order.trigger_price if order.trigger_price is not None else order.limit_price)
+                    )
                 else:
                     self.logger.warn(
                         "found unknown entry %s %.1f @ %.1f, but don't know what stop to use -> canceling"
-                        % (order.id, order.amount,
-                           order.trigger_price if order.trigger_price is not None else order.limit_price))
+                        % (order.id, order.amount, order.trigger_price if order.trigger_price is not None else order.limit_price)
+                    )
                     self.order_interface.cancel_order(order)
+                continue
 
-            elif orderType == OrderType.SL and remainingPosition * order.amount < 0 and abs(
-                    round(remainingPosition, self.symbol.quantityPrecision)) > abs(
-                order.amount):
-                # only assume open position for the waiting SL with the remainingPosition also indicates it, 
-                # otherwise it might be a pending cancel (from executed TP) or already executed
-                newPos = Position(id=posId, entry=None, amount=-order.amount,
-                                  stop=order.trigger_price, tstamp=bars[0].tstamp)
+            is_sl_candidate = orderType == OrderType.SL and remainingPosition * order.amount < 0
+            rounded_remaining = abs(round(remainingPosition, self.symbol.quantityPrecision))
+            if is_sl_candidate and rounded_remaining > abs(order.amount):
+                newPos = Position(id=posId, entry=None, amount=-order.amount, stop=order.trigger_price, tstamp=bars[0].tstamp)
                 newPos.status = PositionStatus.OPEN
                 remainingPosition -= newPos.amount
                 self.open_positions[posId] = newPos
-                self.logger.warn("found unknown exit %s %.1f @ %.1f, opened position for it" % (
-                    order.id, order.amount,
-                    order.trigger_price if order.trigger_price is not None else order.limit_price))
-            else:
-                waiting_tps.append(order)
+                self.logger.warn(
+                    "found unknown exit %s %.1f @ %.1f, opened position for it"
+                    % (order.id, order.amount, order.trigger_price if order.trigger_price is not None else order.limit_price)
+                )
+                continue
 
-        # cancel orphaned TPs
+            waiting_tps.append(order)
+        return remainingPosition, waiting_tps
+
+    def _cancel_orphan_waiting_tps(self, waiting_tps: list):
         for order in waiting_tps:
             orderType = self.order_type_from_order_id(order.id)
             posId = self.position_id_from_order_id(order.id)
-            if posId not in self.open_positions.keys():  # still not in (might have been added in previous for)
+            if posId not in self.open_positions.keys():
                 self.logger.warn(
                     "didn't find matching position for order %s %.1f @ %.1f -> canceling"
-                    % (order.id, order.amount,
-                       order.trigger_price if order.trigger_price is not None else order.limit_price))
+                    % (order.id, order.amount, order.trigger_price if order.trigger_price is not None else order.limit_price)
+                )
                 self.order_interface.cancel_order(order)
 
-        self.logger.info("found " + str(len(self.open_positions)) + " existing positions on sync")
-
-        # positions with no exit in the market
+    def _reconcile_remaining_positions(
+        self,
+        remaining_pos_ids: list,
+        remainingPosition: float,
+        bars: List[Bar],
+        account: Account,
+    ) -> float:
         for posId in remaining_pos_ids:
             pos = self.open_positions[posId]
             if pos.status == PositionStatus.PENDING or pos.status == PositionStatus.TRIGGERED:
-                # should have the opening order in the system, but doesn't
-                if remainingPosition * pos.amount > 0 and abs(
-                        round(remainingPosition, self.symbol.quantityPrecision)) >= abs(pos.amount):
-                    # assume position was opened without us realizing (during downtime)
+                rounded_remaining = abs(round(remainingPosition, self.symbol.quantityPrecision))
+                if remainingPosition * pos.amount > 0 and rounded_remaining >= abs(pos.amount):
                     self.logger.warn(
-                        "pending position with no entry order but open position looks like it was opened: %s" % (posId))
+                        "pending position with no entry order but open position looks like it was opened: %s" % (posId)
+                    )
 
                     avg_entry_from_exchange = None
-
-                    # Try to backfill from the exchange (via order_interface)
                     try:
                         if hasattr(self.order_interface, "get_avg_price_for_position"):
                             avg_entry_from_exchange = self.order_interface.get_avg_price_for_position(pos)
                     except Exception as e:
-                        self.logger.warning(
-                            f"failed to backfill filled_entry from exchange for {posId}: {e}"
-                        )
+                        self.logger.warning(f"failed to backfill filled_entry from exchange for {posId}: {e}")
 
                     if avg_entry_from_exchange is not None:
                         pos.filled_entry = avg_entry_from_exchange
@@ -433,7 +443,6 @@ class TradingBot:
                             f"Backfilled filled_entry for {posId} from exchange avgPrice: {avg_entry_from_exchange}"
                         )
                     else:
-                        # Fallback: old behavior if exchange data not available
                         pos.filled_entry = pos.wanted_entry
                         pos.last_filled_entry = pos.wanted_entry
                         self.logger.info(
@@ -445,100 +454,139 @@ class TradingBot:
                     pos.current_open_amount = pos.amount
                     self.handle_opened_or_changed_position(position=pos, bars=bars, account=account)
                     remainingPosition -= pos.amount
-                else:
-                    self.logger.warn(
-                        "pending position with no entry order and no sign of opening -> close missed: %s" % (posId))
-                    pos.status = PositionStatus.MISSED
-                    self.position_closed(pos, account)
-            elif pos.status == PositionStatus.OPEN:
+                    continue
+
+                self.logger.warn(
+                    "pending position with no entry order and no sign of opening -> close missed: %s" % (posId)
+                )
+                pos.status = PositionStatus.MISSED
+                self.position_closed(pos, account)
+                continue
+
+            if pos.status == PositionStatus.OPEN:
                 if pos.changed:
                     self.logger.info(f"pos has no exit, but is marked changed, so its probably just a race {pos}")
                     continue
                 if pos.initial_stop is not None:
-                    # for some reason we are missing the stop in the market
                     self.logger.warn(
                         "found position with no stop in market. added stop for it: %s with %.1f contracts" % (
-                            posId, pos.current_open_amount))
+                            posId, pos.current_open_amount)
+                    )
                     order_ID = self.generate_order_id(posId, OrderType.SL)
                     amount = -pos.current_open_amount
                     trigger = pos.initial_stop
                     self.logger.info("Sending SL order with ID: %s, amount: %.1f, and trigger: %.1f" % (order_ID, amount, trigger))
-                    self.order_interface.send_order(Order(orderId=order_ID, amount=amount,trigger=trigger))
+                    self.order_interface.send_order(Order(orderId=order_ID, amount=amount, trigger=trigger))
                 else:
                     self.logger.warn(
                         "found position with no stop in market. %s with %.1f contracts. but no initial stop on position had to close" % (
-                            posId, pos.current_open_amount))
+                            posId, pos.current_open_amount)
+                    )
                     self.order_interface.send_order(
-                        Order(orderId=self.generate_order_id(posId, OrderType.SL), amount=-pos.current_open_amount))
-            else:
-                self.logger.warn(
-                    "pending position with noconnected order not pending or open? closed: %s" % (posId))
-                self.position_closed(pos, account)
+                        Order(orderId=self.generate_order_id(posId, OrderType.SL), amount=-pos.current_open_amount)
+                    )
+                continue
 
+            self.logger.warn("pending position with noconnected order not pending or open? closed: %s" % (posId))
+            self.position_closed(pos, account)
+
+        return remainingPosition
+
+    def _handle_unaccounted_position(self, remainingPosition: float, bars: List[Bar], account: Account):
         remainingPosition = round(remainingPosition, self.symbol.quantityPrecision)
-        # now there should not be any mismatch between positions and orders.
-        if remainingPosition != 0:
-            if self.unaccounted_position_cool_off > 1:
-                unmatched_stop = self.get_stop_for_unmatched_amount(remainingPosition, bars)
-                signalId = str(bars[1].tstamp) + '+' + str(randint(0, 99))
-                if unmatched_stop is not None:
-                    posId = self.full_pos_id(signalId,
-                                             PositionDirection.LONG if remainingPosition > 0 else PositionDirection.SHORT)
-                    newPos = Position(id=posId, entry=None, amount=remainingPosition,
-                                      stop=unmatched_stop, tstamp=bars[0].tstamp)
-                    newPos.status = PositionStatus.OPEN
-                    self.open_positions[posId] = newPos
-                    # add stop
-                    self.logger.info(
-                        "couldn't account for " + str(
-                            newPos.current_open_amount) + " open contracts. Adding position with stop for it")
-                    self.order_interface.send_order(Order(orderId=self.generate_order_id(posId, OrderType.SL),
-                                                          trigger=newPos.initial_stop, amount=-newPos.current_open_amount))
-                elif account.open_position.quantity * remainingPosition > 0:
-                    self.logger.info(
-                        "couldn't account for " + str(remainingPosition) + " open contracts. Market close")
-                    self.order_interface.send_order(Order(orderId=signalId + "_marketClose", amount=-remainingPosition))
-                else:
-                    self.logger.info(
-                        "couldn't account for " + str(
-                            remainingPosition) + " open contracts. But close would increase exposure-> mark positions as closed")
-
-                    for pos in self.open_positions.values():
-                        if pos.status == PositionStatus.OPEN and abs(
-                                remainingPosition + pos.current_open_amount) < self.symbol.lotSize:
-                            self.logger.info(f"marked position {pos.id} with exact size as closed ")
-                            self.position_closed(pos, account)
-                            remainingPosition += pos.current_open_amount
-                            break
-
-                    if abs(remainingPosition) >= self.symbol.lotSize:
-                        # close orders until size closed
-                        # TODO: sort by size, close until position flips side
-                        pos_to_close = []
-                        for pos in self.open_positions.values():
-                            if pos.status == PositionStatus.OPEN and pos.current_open_amount * remainingPosition < 0:
-                                # rough sorting to have the smallest first
-                                if len(pos_to_close) > 0 and abs(pos.current_open_amount) <= abs(
-                                        pos_to_close[0].current_open_amount):
-                                    pos_to_close.insert(0, pos)
-                                else:
-                                    pos_to_close.append(pos)
-                        direction = 1 if remainingPosition > 0 else -1
-                        for pos in pos_to_close:
-                            if direction * remainingPosition <= 0 or abs(remainingPosition) < self.symbol.lotSize:
-                                break
-                            self.logger.info(f"marked position {pos.id} as closed ")
-                            remainingPosition += pos.current_open_amount
-                            self.position_closed(pos, account)
-
-
-            else:
-                self.logger.info(
-                    "couldn't account for " + str(
-                        remainingPosition) + " open contracts. cooling off, hoping it's a glitch")
-                self.unaccounted_position_cool_off += 1
-        else:
+        if remainingPosition == 0:
             self.unaccounted_position_cool_off = 0
+            return
+
+        if self.unaccounted_position_cool_off <= 1:
+            self.logger.info(
+                "couldn't account for " + str(remainingPosition) + " open contracts. cooling off, hoping it's a glitch"
+            )
+            self.unaccounted_position_cool_off += 1
+            return
+
+        unmatched_stop = self.get_stop_for_unmatched_amount(remainingPosition, bars)
+        signalId = str(bars[1].tstamp) + '+' + str(randint(0, 99))
+        if unmatched_stop is not None:
+            posId = self.full_pos_id(
+                signalId,
+                PositionDirection.LONG if remainingPosition > 0 else PositionDirection.SHORT,
+            )
+            newPos = Position(id=posId, entry=None, amount=remainingPosition, stop=unmatched_stop, tstamp=bars[0].tstamp)
+            newPos.status = PositionStatus.OPEN
+            self.open_positions[posId] = newPos
+            self.logger.info(
+                "couldn't account for " + str(newPos.current_open_amount) + " open contracts. Adding position with stop for it"
+            )
+            self.order_interface.send_order(
+                Order(
+                    orderId=self.generate_order_id(posId, OrderType.SL),
+                    trigger=newPos.initial_stop,
+                    amount=-newPos.current_open_amount,
+                )
+            )
+            return
+
+        if account.open_position.quantity * remainingPosition > 0:
+            self.logger.info("couldn't account for " + str(remainingPosition) + " open contracts. Market close")
+            self.order_interface.send_order(Order(orderId=signalId + "_marketClose", amount=-remainingPosition))
+            return
+
+        self.logger.info(
+            "couldn't account for " + str(remainingPosition) + " open contracts. But close would increase exposure-> mark positions as closed"
+        )
+        for pos in self.open_positions.values():
+            if pos.status == PositionStatus.OPEN and abs(remainingPosition + pos.current_open_amount) < self.symbol.lotSize:
+                self.logger.info(f"marked position {pos.id} with exact size as closed ")
+                self.position_closed(pos, account)
+                remainingPosition += pos.current_open_amount
+                break
+
+        if abs(remainingPosition) < self.symbol.lotSize:
+            return
+
+        pos_to_close = []
+        for pos in self.open_positions.values():
+            if pos.status == PositionStatus.OPEN and pos.current_open_amount * remainingPosition < 0:
+                if len(pos_to_close) > 0 and abs(pos.current_open_amount) <= abs(pos_to_close[0].current_open_amount):
+                    pos_to_close.insert(0, pos)
+                else:
+                    pos_to_close.append(pos)
+
+        direction = 1 if remainingPosition > 0 else -1
+        for pos in pos_to_close:
+            if direction * remainingPosition <= 0 or abs(remainingPosition) < self.symbol.lotSize:
+                break
+            self.logger.info(f"marked position {pos.id} as closed ")
+            remainingPosition += pos.current_open_amount
+            self.position_closed(pos, account)
+
+    def sync_positions_with_open_orders(self, bars: List[Bar], account: Account):
+        open_pos = self._sum_open_position_amount()
+
+        if not self.got_data_for_position_sync(bars):
+            self.logger.warn("got no initial data, can't sync positions")
+            self.unaccounted_position_cool_off = 0
+            return
+
+        remaining_pos_ids, remaining_orders = self._collect_remaining_sync_entities(account)
+        if self._is_sync_aligned(open_pos, account, remaining_orders, remaining_pos_ids):
+            self.unaccounted_position_cool_off = 0
+            return
+
+        self.logger.info("Has to start order/pos sync with bot vs acc: %.3f vs. %.3f and %i vs %i, remaining: %i,  %i"
+                         % (
+                             open_pos, account.open_position.quantity, len(self.open_positions),
+                             len(account.open_orders),
+                             len(remaining_orders), len(remaining_pos_ids)))
+
+        remainingPosition = self._compute_remaining_position_amount(account)
+        remainingPosition, waiting_tps = self._process_remaining_orders(remaining_orders, bars, remainingPosition)
+        self._cancel_orphan_waiting_tps(waiting_tps)
+        self.logger.info("found " + str(len(self.open_positions)) + " existing positions on sync")
+
+        remainingPosition = self._reconcile_remaining_positions(remaining_pos_ids, remainingPosition, bars, account)
+        self._handle_unaccounted_position(remainingPosition, bars, account)
 
     #####################################################
 

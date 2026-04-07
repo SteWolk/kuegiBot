@@ -1,5 +1,5 @@
 import math
-from typing import List
+from typing import Dict, List, Optional
 
 import plotly.graph_objects as go
 import numpy as np
@@ -7,17 +7,21 @@ import talib
 
 from kuegi_bot.bots.strategies.trend_strategy import TrendStrategy
 from kuegi_bot.bots.strategies.trend_indicator_engine import TAdataTrendStrategy
-from kuegi_bot.bots.strategies.strategy_one_entry_gate import entry_gate_passes
-from kuegi_bot.bots.strategies.strategy_one_entry_context import build_entry_context
 from kuegi_bot.bots.strategies.strategy_one_entry_modules import (
     EntryExecutionContext,
     as_entry_module,
+    build_entry_context,
     default_entry_modules,
+    entry_gate_passes,
+    module_passes_common_rules,
     module_name,
+)
+from kuegi_bot.bots.strategies.strategy_one_entry_schema import (
+    find_deprecated_legacy_keys,
+    flatten_entry_module_config,
 )
 from kuegi_bot.bots.trading_bot import TradingBot, PositionDirection
 from kuegi_bot.indicators.indicator import Indicator
-from kuegi_bot.utils.trading_classes import Bar, Account, Symbol, OrderType, Position
 from kuegi_bot.utils.trading_classes import Bar, Account, Symbol, OrderType, Order, PositionStatus, Position
 
 
@@ -46,6 +50,9 @@ class StrategyOne(TrendStrategy):
                  plotIndicators: bool = False, plot_RSI: bool = False, use_shapes: bool = False, plotBackgroundColor4Trend: bool = False,
                  plotTrailsAndEMAs: bool = False, plotBBands:bool=False, plotATR:bool=False, trend_atr_fac: float = 0.5,
                  trend_var_1: float = 0,
+                 indicator_mode: str = "incremental",
+                 open_interest_by_tstamp: Optional[Dict[int, float]] = None,
+                 funding_by_tstamp: Optional[Dict[int, float]] = None,
                  # Risk
                  risk_with_trend: float = 1, risk_counter_trend: float = 1, risk_ranging: float = 1, risk_fac_shorts = 1,
                  # SL
@@ -68,6 +75,9 @@ class StrategyOne(TrendStrategy):
             volume_sma_4h_period =volume_sma_4h_period,
             plotIndicators = plotIndicators, plot_RSI = plot_RSI,
             trend_var_1 = trend_var_1,
+            indicator_mode = indicator_mode,
+            open_interest_by_tstamp=open_interest_by_tstamp,
+            funding_by_tstamp=funding_by_tstamp,
             # Risk
             risk_with_trend = risk_with_trend, risk_counter_trend = risk_counter_trend, risk_ranging = risk_ranging, risk_fac_shorts=risk_fac_shorts,
             # SL
@@ -96,13 +106,23 @@ class StrategyOne(TrendStrategy):
         self.risk_ref = risk_ref
         self.reduceRisk = reduceRisk
 
-        module_config = {} if entry_module_config is None else dict(entry_module_config)
+        module_config = flatten_entry_module_config(entry_module_config)
         self.sl_atr_fac = sl_atr_fac
         self.shortsAllowed = shortsAllowed
         self.longsAllowed = longsAllowed
         self.tp_fac_strat_one = tp_fac_strat_one
         self.plotStrategyOneData = plotStrategyOneData
         self.plotTrailsStatOne = plotTrailsStatOne
+
+        deprecated_keys = find_deprecated_legacy_keys(entry_module_config if isinstance(entry_module_config, dict) else {})
+        if len(deprecated_keys) > 0:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning(
+                    "StrategyOne legacy entry params are deprecated and should be migrated to schema-v1: %s",
+                    ", ".join(deprecated_keys),
+                )
+
         self.entryModules = default_entry_modules(module_config)
 
     def myId(self):
@@ -167,8 +187,7 @@ class StrategyOne(TrendStrategy):
         super().init(bars, account, symbol)
 
     def min_bars_needed(self) -> int:
-        min_bars = super().min_bars_needed()
-        return min_bars
+        return super().min_bars_needed()
 
     def prep_bars(self, is_new_bar: bool, bars: list):
         if is_new_bar:
@@ -210,8 +229,7 @@ class StrategyOne(TrendStrategy):
         super().manage_open_order(order, position, bars, to_update, to_cancel, open_positions)
 
     def got_data_for_position_sync(self, bars: List[Bar]) -> bool:
-        result= super().got_data_for_position_sync(bars)
-        return result
+        return super().got_data_for_position_sync(bars)
 
     def open_new_trades(self, is_new_bar, directionFilter, bars, account, open_positions, all_open_pos: dict):
         enter_position_NOW_1 = False
@@ -268,11 +286,18 @@ class StrategyOne(TrendStrategy):
         )
 
         for idx, entry_module in enumerate(self.entryModules):
-            if not hasattr(entry_module, "run") or not hasattr(entry_module, "enabled"):
-                entry_module = as_entry_module(entry_module)
-                self.entryModules[idx] = entry_module
-            if entry_module.enabled(execution_context) and entry_module.is_ready(execution_context):
-                entry_module.run(execution_context)
+            normalized_module = entry_module
+            has_run = hasattr(normalized_module, "run")
+            has_enabled = hasattr(normalized_module, "enabled")
+            if not has_run or not has_enabled:
+                normalized_module = as_entry_module(normalized_module)
+                self.entryModules[idx] = normalized_module
+
+            module_enabled = normalized_module.enabled(execution_context)
+            module_ready = normalized_module.is_ready(execution_context)
+            module_common_ok = module_passes_common_rules(normalized_module, execution_context)
+            if module_enabled and module_ready and module_common_ok:
+                normalized_module.run(execution_context)
 
         longed = execution_context.longed
         shorted = execution_context.shorted

@@ -61,10 +61,10 @@ class Indicator:
 
     @staticmethod
     def get_data_static(bar: Bar, indiId:str):
-        if 'indicators' in bar.bot_data.keys() and indiId in bar.bot_data['indicators'].keys():
-            return bar.bot_data["indicators"][indiId]
-        else:
+        indicators = bar.bot_data.get("indicators")
+        if not isinstance(indicators, dict):
             return None
+        return indicators.get(indiId)
 
     def get_data_for_plot(self, bar: Bar):
         return [self.get_data(bar)]  # default

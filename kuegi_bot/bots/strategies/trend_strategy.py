@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List, Optional
 import plotly.graph_objects as go
 
 from kuegi_bot.bots.strategies.strat_w_trade_man import StrategyWithTradeManagement
@@ -8,7 +8,7 @@ from kuegi_bot.bots.strategies.trend_indicator_engine import (
     TAdataTrendStrategy,
     TATrendStrategyIndicator,
 )
-from kuegi_bot.bots.strategies.trend_sl_rules import apply_trend_sl_rules
+from kuegi_bot.bots.strategies.trend_indicator_provider import build_trend_indicator_provider
 from kuegi_bot.utils.trading_classes import Bar, Account, Symbol, OrderType, Order, PositionStatus, Position
 from kuegi_bot.bots.trading_bot import TradingBot
 
@@ -18,6 +18,72 @@ class DataTrendStrategy:
         # non-TA Data of the Trend Strategy
         self.stopLong = None
         self.stopShort = None
+
+
+def _apply_trend_sl_rules(strategy, order, position, bars):
+    new_trigger_price = order.trigger_price
+    ta = strategy.ta_trend_strat.taData_trend_strat
+
+    if (
+        new_trigger_price is not None
+        and ta.bbands_4h.middleband is not None
+        and ta.bbands_4h.std is not None
+    ):
+        upper_band = ta.bbands_4h.middleband + ta.bbands_4h.std * strategy.sl_upper_bb_std_fac
+        lower_band = ta.bbands_4h.middleband - ta.bbands_4h.std * strategy.sl_lower_bb_std_fac
+        if order.amount > 0:  # SL for SHORTS
+            if strategy.be_by_middleband and bars[1].low < ta.bbands_4h.middleband:
+                new_trigger_price = min(position.wanted_entry, new_trigger_price)
+            if strategy.be_by_opposite and bars[1].low < (lower_band + ta.atr_4h * strategy.atr_buffer_fac):
+                new_trigger_price = min(position.wanted_entry, new_trigger_price)
+            if strategy.stop_at_new_entry and bars[1].low < ta.bbands_4h.middleband:
+                new_trigger_price = min(upper_band, new_trigger_price)
+            if strategy.stop_short_at_middleband and bars[1].low < lower_band:
+                new_trigger_price = min(ta.bbands_4h.middleband - ta.atr_4h, new_trigger_price)
+            if strategy.tp_on_opposite and bars[1].low < lower_band:
+                new_trigger_price = min(bars[0].open, new_trigger_price)
+            if strategy.tp_at_middleband and bars[0].open < ta.bbands_4h.middleband:
+                new_trigger_price = min(ta.bbands_4h.middleband, new_trigger_price)
+            if strategy.trail_sl_with_bband:
+                new_trigger_price = min(upper_band, new_trigger_price)
+            if strategy.moving_sl_atr_fac > 0 and bars[1].low + ta.atr_4h * strategy.moving_sl_atr_fac < new_trigger_price:
+                new_trigger_price = bars[1].low + ta.atr_4h * strategy.moving_sl_atr_fac
+            if strategy.stop_at_trail:
+                new_trigger_price = min(ta.highs_trail_4h + ta.atr_4h * 8, new_trigger_price)
+            middleband = ta.bbands_4h.middleband
+            std = ta.bbands_4h.std
+            cond_1 = new_trigger_price > (middleband + 0.5 * std)
+            cond_2 = bars[1].low < middleband - 3 * std
+            cond_3 = ta.rsi_w > 55
+            if cond_1 and cond_2 and cond_3:
+                new_trigger_price = bars[1].close + 0.1 * ta.atr_4h
+
+        elif order.amount < 0:  # SL for LONGS
+            if strategy.stop_at_trail:
+                new_trigger_price = max(ta.lows_trail_4h - ta.atr_4h, new_trigger_price)
+            if strategy.stop_at_lowerband:
+                new_trigger_price = max(lower_band, new_trigger_price)
+            if strategy.be_by_middleband and bars[1].high > ta.bbands_4h.middleband:
+                new_trigger_price = max(position.wanted_entry, new_trigger_price)
+            if strategy.be_by_opposite and bars[1].high > (upper_band - ta.atr_4h * strategy.atr_buffer_fac):
+                new_trigger_price = max(position.wanted_entry, new_trigger_price)
+            if strategy.stop_at_new_entry and bars[1].high > ta.bbands_4h.middleband:
+                new_trigger_price = max(lower_band, new_trigger_price)
+            if strategy.stop_at_middleband and bars[1].high > (upper_band - ta.atr_4h * strategy.atr_buffer_fac):
+                new_trigger_price = max(ta.bbands_4h.middleband, new_trigger_price)
+            if strategy.tp_on_opposite and bars[1].high > upper_band:
+                new_trigger_price = max(bars[0].open, new_trigger_price)
+            if strategy.tp_at_middleband and bars[0].open > ta.bbands_4h.middleband:
+                new_trigger_price = max(ta.bbands_4h.middleband, new_trigger_price)
+            if strategy.trail_sl_with_bband:
+                new_trigger_price = max(lower_band, new_trigger_price)
+            if strategy.ema_multiple_4_tp != 0:
+                ema_multiple = ta.ema_w * strategy.ema_multiple_4_tp
+                d_rsi_low = 90 < ta.rsi_d
+                if bars[0].open > ema_multiple and d_rsi_low:
+                    new_trigger_price = bars[0].open
+
+    return new_trigger_price
 
 
 class TrendStrategy(StrategyWithTradeManagement):
@@ -41,10 +107,19 @@ class TrendStrategy(StrategyWithTradeManagement):
                  use_shapes: bool = False, plotBackgroundColor4Trend: bool = False, plotTrailsAndEMAs: bool = False,
                  plotBBands: bool = False, plotATR:bool = False,
                  trend_indicator_id_suffix: str = "",
+                 indicator_mode: str = "incremental",
+                 open_interest_by_tstamp: Optional[Dict[int, float]] = None,
+                 funding_by_tstamp: Optional[Dict[int, float]] = None,
                  # StrategyWithTradeManagement
                  maxPositions: int = 100, consolidate: bool = False, close_on_opposite: bool = False, bars_till_cancel_triggered: int = 3,
                  limit_entry_offset_perc: float = -0.1, delayed_cancel: bool = False, cancel_on_filter: bool = True,
-                 tp_fac: float = 0
+                 tp_fac: float = 0,
+                 # Volatility targeting (off by default to preserve current behavior)
+                 vol_target_enabled: bool = False,
+                 vol_target_natr_target: float = 0.8,
+                 vol_target_natr_floor: float = 0.05,
+                 vol_target_scale_min: float = 0.25,
+                 vol_target_scale_max: float = 4.0,
                  ):
         super().__init__(
             # StrategyWithTradeManagement
@@ -61,8 +136,12 @@ class TrendStrategy(StrategyWithTradeManagement):
             sl_upper_bb_std_fac = sl_upper_bb_std_fac,
             sl_lower_bb_std_fac = sl_lower_bb_std_fac, trend_var_1= trend_var_1, oversold_limit_w_rsi = 30, reset_level_of_oversold_rsi = 50,
             rsi_4h_period = rsi_4h_period, rsi_d_period = 14, volume_sma_4h_period= volume_sma_4h_period, trend_atr_fac = trend_atr_fac,
+            open_interest_by_tstamp=open_interest_by_tstamp,
+            funding_by_tstamp=funding_by_tstamp,
             indicator_id_suffix=trend_indicator_id_suffix
         )
+        self.indicator_mode = indicator_mode
+        self._indicator_provider = build_trend_indicator_provider(self.ta_trend_strat, indicator_mode)
         self.plotIndicators = plotIndicators
         self.plot_RSI = plot_RSI
         # Risk
@@ -70,6 +149,11 @@ class TrendStrategy(StrategyWithTradeManagement):
         self.risk_counter_trend = risk_counter_trend
         self.risk_ranging = risk_ranging
         self.risk_fac_shorts = risk_fac_shorts
+        self.vol_target_enabled = bool(vol_target_enabled)
+        self.vol_target_natr_target = max(0.0, float(vol_target_natr_target))
+        self.vol_target_natr_floor = max(1e-9, float(vol_target_natr_floor))
+        self.vol_target_scale_min = max(0.0, float(vol_target_scale_min))
+        self.vol_target_scale_max = max(self.vol_target_scale_min, float(vol_target_scale_max))
         # SL entry parameters
         self.be_by_middleband = be_by_middleband
         self.be_by_opposite = be_by_opposite
@@ -99,21 +183,26 @@ class TrendStrategy(StrategyWithTradeManagement):
         super().init(bars, account, symbol)
         #self.logger.info(vars(self))
 
+    def set_backtest_bars(self, bars: List[Bar]):
+        if hasattr(super(), "set_backtest_bars"):
+            super().set_backtest_bars(bars)
+        self._indicator_provider.prepare_backtest(bars)
+
     def myId(self):
         return "TrendStrategy"
 
     def min_bars_needed(self) -> int:
-        return self.ta_trend_strat.max_4h_history_candles+1
+        return self.ta_trend_strat.max_4h_history_candles + 1
 
     def prep_bars(self, is_new_bar: bool, bars: list):
-        if is_new_bar:
-            self.ta_trend_strat.taData_trend_strat.talibbars.on_tick(bars)
-            self.ta_trend_strat.on_tick(bars)
-            #self.logger.info('Current ta indicator values of trend strat:')
-            #self.logger.info(vars(self.ta_trend_strat.taData_trend_strat))
+        if not is_new_bar:
+            return
+        self._indicator_provider.on_new_bar(bars)
+        #self.logger.info('Current ta indicator values of trend strat:')
+        #self.logger.info(vars(self.ta_trend_strat.taData_trend_strat))
 
     def get_ta_data_trend_strategy(self):
-        return self.ta_trend_strat.taData_trend_strat
+        return self._indicator_provider.get_ta_data()
 
     def add_to_price_data_plot(self, fig: go.Figure, bars: List[Bar], time):
         super().add_to_price_data_plot(fig, bars, time)
@@ -305,6 +394,19 @@ class TrendStrategy(StrategyWithTradeManagement):
             if delta<0:
                 risk = risk/2  # less risk for shorts
 
+        if self.vol_target_enabled:
+            current_vol = getattr(self.ta_trend_strat.taData_trend_strat, "natr_4h", None)
+            try:
+                current_vol = float(current_vol)
+            except (TypeError, ValueError):
+                current_vol = None
+
+            if current_vol is not None and current_vol == current_vol and current_vol > 0:
+                vol_ref = max(current_vol, self.vol_target_natr_floor)
+                vol_scale = self.vol_target_natr_target / vol_ref
+                vol_scale = max(self.vol_target_scale_min, min(vol_scale, self.vol_target_scale_max))
+                risk = risk * vol_scale
+
         if not self.symbol.isInverse:
             amount = risk / delta
         else:
@@ -314,29 +416,29 @@ class TrendStrategy(StrategyWithTradeManagement):
 
     def manage_open_order(self, order, position, bars, to_update, to_cancel, open_positions):
         super().manage_open_order(order, position, bars, to_update, to_cancel, open_positions)
-        # determine new bar by timestamp
-        current_t = bars[0].tstamp
-        is_new_bar = (current_t != self._last_bar_tstamp)
-        if is_new_bar:
-            self._last_bar_tstamp = current_t
-            self.logger.info(
-                f"[TrendStrategy] is_new_bar=True at t={bars[0].tstamp}, "
-                f"open={bars[0].open}, close={bars[0].close}"
-            )
+        current_tstamp = bars[0].tstamp
+        is_new_bar = current_tstamp != self._last_bar_tstamp
+        if not is_new_bar:
+            return
 
-        if is_new_bar:
-            # Update SLs based on BBs
-            orderType = TradingBot.order_type_from_order_id(order.id)
-            if orderType == OrderType.SL:  # Manage Stop Losses
-                new_trigger_price = apply_trend_sl_rules(
-                    strategy=self,
-                    order=order,
-                    position=position,
-                    bars=bars,
-                )
+        self._last_bar_tstamp = current_tstamp
+        self.logger.info(
+            f"[TrendStrategy] is_new_bar=True at t={bars[0].tstamp}, "
+            f"open={bars[0].open}, close={bars[0].close}"
+        )
 
-                if new_trigger_price != order.trigger_price:
-                    order.trigger_price = new_trigger_price
-                    to_update.append(order)
+        order_type = TradingBot.order_type_from_order_id(order.id)
+        if order_type != OrderType.SL:
+            return
+
+        new_trigger_price = _apply_trend_sl_rules(
+            strategy=self,
+            order=order,
+            position=position,
+            bars=bars,
+        )
+        if new_trigger_price != order.trigger_price:
+            order.trigger_price = new_trigger_price
+            to_update.append(order)
 
 

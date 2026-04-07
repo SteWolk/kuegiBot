@@ -1,9 +1,16 @@
-from typing import List
+from typing import Dict, List, Optional
 
 import numpy as np
 import talib
 
-from kuegi_bot.bots.strategies.trend_enums import MarketDynamic, MarketRegime
+from kuegi_bot.bots.strategies.trend_enums import (
+    MarketDynamic,
+    MarketRegime,
+    OIFundingState,
+    OIPriceFlowState,
+    oi_funding_state_from_metrics,
+    oi_price_flow_state_from_returns,
+)
 from kuegi_bot.indicators.indicator import Indicator
 from kuegi_bot.indicators.talibbars import TAlibBars
 from kuegi_bot.utils.trading_classes import Bar
@@ -40,8 +47,26 @@ class TAdataTrendStrategy:
         self.lows_trail_4h = None
         self.mid_trail_4h = None
         self.rsi_4h_vec = None
+        self.adx_4h_vec = None
+        self.plus_di_4h_vec = None
+        self.minus_di_4h_vec = None
         self.volume_4h = None
         self.volume_sma_4h_vec = None
+        self.oi_4h_vec = None
+        self.oi_4h = None
+        self.oi_sma_4h_vec = None
+        self.oi_sma_4h = None
+        self.oi_ratio_4h = None
+        self.funding_4h_vec = None
+        self.funding_4h = None
+        self.oi_ret_pct_4h = None
+        self.price_ret_pct_4h = None
+        self.oi_price_flow_state = OIPriceFlowState.NEUTRAL
+        self.oi_funding_state = OIFundingState.NEUTRAL
+        self.adx_4h = None
+        self.adx_4h_slope = None
+        self.plus_di_4h = None
+        self.minus_di_4h = None
         # daily arrays
         # self.rsi_d_vec = None
         self.rsi_d = None
@@ -69,6 +94,19 @@ class TATrendStrategyIndicator(Indicator):
         lows_trail_4h_period: int = 10,
         rsi_4h_period: int = 10,
         volume_sma_4h_period: int = 100,
+        open_interest_by_tstamp: Optional[Dict[int, float]] = None,
+        oi_4h_sma_period: int = 20,
+        oi_max_staleness_bars: int = 12,
+        oi_flow_lookback_bars: int = 1,
+        oi_flow_price_min_pct: float = 0.0,
+        oi_flow_oi_min_pct: float = 0.0,
+        funding_by_tstamp: Optional[Dict[int, float]] = None,
+        funding_max_staleness_bars: int = 12,
+        oi_funding_lookback_bars: int = 1,
+        oi_funding_oi_up_min_pct: float = 0.0,
+        oi_funding_oi_down_min_pct: float = 0.0,
+        oi_funding_pos_min: float = 0.0,
+        oi_funding_neg_min: float = 0.0,
         # daily periods
         days_buffer_bear: int = 2,
         days_buffer_bull: int = 0,
@@ -114,6 +152,25 @@ class TATrendStrategyIndicator(Indicator):
         self.highs_trail_4h_period = highs_trail_4h_period
         self.lows_trail_4h_period = lows_trail_4h_period
         self.volume_sma_4h_period = volume_sma_4h_period
+        self.oi_4h_sma_period = max(1, int(oi_4h_sma_period))
+        self.oi_max_staleness_bars = max(1, int(oi_max_staleness_bars))
+        self.oi_flow_lookback_bars = max(1, int(oi_flow_lookback_bars))
+        self.oi_flow_price_min_pct = max(0.0, float(oi_flow_price_min_pct))
+        self.oi_flow_oi_min_pct = max(0.0, float(oi_flow_oi_min_pct))
+        self.funding_max_staleness_bars = max(1, int(funding_max_staleness_bars))
+        self.oi_funding_lookback_bars = max(1, int(oi_funding_lookback_bars))
+        self.oi_funding_oi_up_min_pct = max(0.0, float(oi_funding_oi_up_min_pct))
+        self.oi_funding_oi_down_min_pct = max(0.0, float(oi_funding_oi_down_min_pct))
+        self.oi_funding_pos_min = max(0.0, float(oi_funding_pos_min))
+        self.oi_funding_neg_min = max(0.0, float(oi_funding_neg_min))
+        self._oi_max_age_seconds = int(self.oi_max_staleness_bars * max(1, int(timeframe)) * 60)
+        self._funding_max_age_seconds = int(self.funding_max_staleness_bars * max(1, int(timeframe)) * 60)
+        self._oi_ts = np.array([], dtype=np.int64)
+        self._oi_values = np.array([], dtype=float)
+        self._funding_ts = np.array([], dtype=np.int64)
+        self._funding_values = np.array([], dtype=float)
+        self._set_open_interest_series(open_interest_by_tstamp)
+        self._set_funding_series(funding_by_tstamp)
         # Daily periods
         self.days_buffer_bear = days_buffer_bear
         self.rsi_d_period = rsi_d_period
@@ -136,6 +193,104 @@ class TATrendStrategyIndicator(Indicator):
             (self.max_w_period + 2) * 7 * 6,
         )
         self.max_4h_history_candles = self.max_4h_period
+
+    def _set_open_interest_series(self, open_interest_by_tstamp: Optional[Dict[int, float]]):
+        if not isinstance(open_interest_by_tstamp, dict) or len(open_interest_by_tstamp) == 0:
+            self._oi_ts = np.array([], dtype=np.int64)
+            self._oi_values = np.array([], dtype=float)
+            return
+
+        pairs = []
+        for ts_raw, oi_raw in open_interest_by_tstamp.items():
+            try:
+                ts = int(ts_raw)
+                oi = float(oi_raw)
+            except Exception:
+                continue
+            if np.isfinite(oi):
+                pairs.append((ts, oi))
+        if len(pairs) == 0:
+            self._oi_ts = np.array([], dtype=np.int64)
+            self._oi_values = np.array([], dtype=float)
+            return
+
+        pairs.sort(key=lambda row: row[0])
+        self._oi_ts = np.array([row[0] for row in pairs], dtype=np.int64)
+        self._oi_values = np.array([row[1] for row in pairs], dtype=float)
+
+    def has_open_interest(self) -> bool:
+        return len(self._oi_ts) > 0 and len(self._oi_values) > 0
+
+    def lookup_open_interest(self, timestamps: np.ndarray) -> np.ndarray:
+        ts_arr = np.asarray(timestamps, dtype=np.int64)
+        out = np.full(len(ts_arr), np.nan, dtype=float)
+        if len(ts_arr) == 0 or not self.has_open_interest():
+            return out
+
+        idx = np.searchsorted(self._oi_ts, ts_arr, side="right") - 1
+        valid = idx >= 0
+        if not np.any(valid):
+            return out
+
+        valid_idx = idx[valid]
+        matched_ts = self._oi_ts[valid_idx]
+        age_seconds = ts_arr[valid] - matched_ts
+        recent = age_seconds >= 0
+        recent = recent & (age_seconds <= self._oi_max_age_seconds)
+        if np.any(recent):
+            mapped = self._oi_values[valid_idx[recent]]
+            out_idx = np.where(valid)[0][recent]
+            out[out_idx] = mapped
+        return out
+
+    def _set_funding_series(self, funding_by_tstamp: Optional[Dict[int, float]]):
+        if not isinstance(funding_by_tstamp, dict) or len(funding_by_tstamp) == 0:
+            self._funding_ts = np.array([], dtype=np.int64)
+            self._funding_values = np.array([], dtype=float)
+            return
+
+        pairs = []
+        for ts_raw, value_raw in funding_by_tstamp.items():
+            try:
+                ts = int(ts_raw)
+                value = float(value_raw)
+            except Exception:
+                continue
+            if np.isfinite(value):
+                pairs.append((ts, value))
+        if len(pairs) == 0:
+            self._funding_ts = np.array([], dtype=np.int64)
+            self._funding_values = np.array([], dtype=float)
+            return
+
+        pairs.sort(key=lambda row: row[0])
+        self._funding_ts = np.array([row[0] for row in pairs], dtype=np.int64)
+        self._funding_values = np.array([row[1] for row in pairs], dtype=float)
+
+    def has_funding(self) -> bool:
+        return len(self._funding_ts) > 0 and len(self._funding_values) > 0
+
+    def lookup_funding(self, timestamps: np.ndarray) -> np.ndarray:
+        ts_arr = np.asarray(timestamps, dtype=np.int64)
+        out = np.full(len(ts_arr), np.nan, dtype=float)
+        if len(ts_arr) == 0 or not self.has_funding():
+            return out
+
+        idx = np.searchsorted(self._funding_ts, ts_arr, side="right") - 1
+        valid = idx >= 0
+        if not np.any(valid):
+            return out
+
+        valid_idx = idx[valid]
+        matched_ts = self._funding_ts[valid_idx]
+        age_seconds = ts_arr[valid] - matched_ts
+        recent = age_seconds >= 0
+        recent = recent & (age_seconds <= self._funding_max_age_seconds)
+        if np.any(recent):
+            mapped = self._funding_values[valid_idx[recent]]
+            out_idx = np.where(valid)[0][recent]
+            out[out_idx] = mapped
+        return out
 
     def on_tick(self, bars: List[Bar]):
         # Run TA calculations
@@ -166,6 +321,9 @@ class TATrendStrategyIndicator(Indicator):
         self.taData_trend_strat.natr_slow_4h_vec = np.full(self.max_4h_period, np.nan)
         self.taData_trend_strat.rsi_4h_vec = np.full(self.max_4h_period, np.nan)
         self.taData_trend_strat.volume_sma_4h_vec = np.full(self.max_4h_period, np.nan)
+        self.taData_trend_strat.oi_4h_vec = np.full(self.max_4h_period, np.nan)
+        self.taData_trend_strat.oi_sma_4h_vec = np.full(self.max_4h_period, np.nan)
+        self.taData_trend_strat.funding_4h_vec = np.full(self.max_4h_period, np.nan)
 
         # Daily arrays
         # self.taData_trend_strat.rsi_d_vec = np.full(self.max_d_period, np.nan)
@@ -277,6 +435,113 @@ class TATrendStrategyIndicator(Indicator):
             volume[-self.max_4h_period :], self.volume_sma_4h_period, 0
         )
 
+        # Open Interest aligned to 4H bar timestamps.
+        ts_arr = getattr(talibbars, "timestamps", None)
+        oi_4h_vec = np.full(self.max_4h_period, np.nan, dtype=float)
+        if ts_arr is not None and len(ts_arr) >= self.max_4h_period:
+            oi_4h_vec = self.lookup_open_interest(np.asarray(ts_arr[-self.max_4h_period :], dtype=np.int64))
+        oi_sma_4h_vec = talib.MA(oi_4h_vec, self.oi_4h_sma_period, 0)
+
+        self.taData_trend_strat.oi_4h_vec = oi_4h_vec
+        self.taData_trend_strat.oi_sma_4h_vec = oi_sma_4h_vec
+        self.taData_trend_strat.oi_4h = oi_4h_vec[-1]
+        self.taData_trend_strat.oi_sma_4h = oi_sma_4h_vec[-1]
+        if (
+            self.taData_trend_strat.oi_4h is not None
+            and self.taData_trend_strat.oi_sma_4h is not None
+            and np.isfinite(self.taData_trend_strat.oi_4h)
+            and np.isfinite(self.taData_trend_strat.oi_sma_4h)
+            and abs(self.taData_trend_strat.oi_sma_4h) > 1e-12
+        ):
+            self.taData_trend_strat.oi_ratio_4h = self.taData_trend_strat.oi_4h / self.taData_trend_strat.oi_sma_4h
+        else:
+            self.taData_trend_strat.oi_ratio_4h = np.nan
+
+        funding_4h_vec = np.full(self.max_4h_period, np.nan, dtype=float)
+        if ts_arr is not None and len(ts_arr) >= self.max_4h_period:
+            funding_4h_vec = self.lookup_funding(np.asarray(ts_arr[-self.max_4h_period :], dtype=np.int64))
+        self.taData_trend_strat.funding_4h_vec = funding_4h_vec
+        self.taData_trend_strat.funding_4h = funding_4h_vec[-1]
+
+        lookback = int(self.oi_flow_lookback_bars)
+        price_ret = np.nan
+        oi_ret = np.nan
+        if len(close) > lookback:
+            prev_close = float(close[-(lookback + 1)])
+            curr_close = float(close[-1])
+            if np.isfinite(prev_close) and np.isfinite(curr_close) and abs(prev_close) > 1e-12:
+                price_ret = ((curr_close - prev_close) / abs(prev_close)) * 100.0
+        if len(oi_4h_vec) > lookback:
+            prev_oi = float(oi_4h_vec[-(lookback + 1)])
+            curr_oi = float(oi_4h_vec[-1])
+            if np.isfinite(prev_oi) and np.isfinite(curr_oi) and abs(prev_oi) > 1e-12:
+                oi_ret = ((curr_oi - prev_oi) / abs(prev_oi)) * 100.0
+
+        self.taData_trend_strat.price_ret_pct_4h = price_ret
+        self.taData_trend_strat.oi_ret_pct_4h = oi_ret
+        if np.isfinite(price_ret) and np.isfinite(oi_ret):
+            self.taData_trend_strat.oi_price_flow_state = oi_price_flow_state_from_returns(
+                price_ret_pct=float(price_ret),
+                oi_ret_pct=float(oi_ret),
+                price_min_pct=float(self.oi_flow_price_min_pct),
+                oi_min_pct=float(self.oi_flow_oi_min_pct),
+            )
+        else:
+            self.taData_trend_strat.oi_price_flow_state = OIPriceFlowState.NEUTRAL
+
+        oi_funding_lookback = int(self.oi_funding_lookback_bars)
+        oi_ret_for_funding = np.nan
+        funding_now = np.nan
+        if len(oi_4h_vec) > oi_funding_lookback:
+            prev_oi_f = float(oi_4h_vec[-(oi_funding_lookback + 1)])
+            curr_oi_f = float(oi_4h_vec[-1])
+            if np.isfinite(prev_oi_f) and np.isfinite(curr_oi_f) and abs(prev_oi_f) > 1e-12:
+                oi_ret_for_funding = ((curr_oi_f - prev_oi_f) / abs(prev_oi_f)) * 100.0
+        if len(funding_4h_vec) > 0:
+            funding_now = float(funding_4h_vec[-1])
+
+        if np.isfinite(oi_ret_for_funding) and np.isfinite(funding_now):
+            self.taData_trend_strat.oi_funding_state = oi_funding_state_from_metrics(
+                oi_ret_pct=float(oi_ret_for_funding),
+                funding_rate=float(funding_now),
+                oi_up_min_pct=float(self.oi_funding_oi_up_min_pct),
+                oi_down_min_pct=float(self.oi_funding_oi_down_min_pct),
+                funding_pos_min=float(self.oi_funding_pos_min),
+                funding_neg_min=float(self.oi_funding_neg_min),
+            )
+        else:
+            self.taData_trend_strat.oi_funding_state = OIFundingState.NEUTRAL
+
+        # Update ADX / DMI for 4H timeframe
+        adx_4h_vec = talib.ADX(
+            high[-self.max_4h_period - 1 :],
+            low[-self.max_4h_period - 1 :],
+            close[-self.max_4h_period - 1 :],
+            35,
+        )
+        plus_di_4h_vec = talib.PLUS_DI(
+            high[-self.max_4h_period - 1 :],
+            low[-self.max_4h_period - 1 :],
+            close[-self.max_4h_period - 1 :],
+            35,
+        )
+        minus_di_4h_vec = talib.MINUS_DI(
+            high[-self.max_4h_period - 1 :],
+            low[-self.max_4h_period - 1 :],
+            close[-self.max_4h_period - 1 :],
+            35,
+        )
+        self.taData_trend_strat.adx_4h_vec = adx_4h_vec
+        self.taData_trend_strat.plus_di_4h_vec = plus_di_4h_vec
+        self.taData_trend_strat.minus_di_4h_vec = minus_di_4h_vec
+        self.taData_trend_strat.adx_4h = adx_4h_vec[-1]
+        self.taData_trend_strat.plus_di_4h = plus_di_4h_vec[-1]
+        self.taData_trend_strat.minus_di_4h = minus_di_4h_vec[-1]
+        if len(adx_4h_vec) >= 2 and not np.isnan(adx_4h_vec[-1]) and not np.isnan(adx_4h_vec[-2]):
+            self.taData_trend_strat.adx_4h_slope = adx_4h_vec[-1] - adx_4h_vec[-2]
+        else:
+            self.taData_trend_strat.adx_4h_slope = np.nan
+
     def update_daily_values(self):
         talibbars = self.taData_trend_strat.talibbars
         close = talibbars.close_daily
@@ -335,12 +600,14 @@ class TATrendStrategyIndicator(Indicator):
     def identifyMarketDynamics(self):
         # Average Directional Movement Index
         self.taData_trend_strat.marketDynamic = MarketDynamic.TRENDING
-        talibbars = self.taData_trend_strat.talibbars
-        close = talibbars.close
-        high = talibbars.high
-        low = talibbars.low
-        period = 35
-        adx = talib.ADX(high, low, close, period)[-1]
+        adx = self.taData_trend_strat.adx_4h
+        if adx is None or np.isnan(adx):
+            talibbars = self.taData_trend_strat.talibbars
+            close = talibbars.close
+            high = talibbars.high
+            low = talibbars.low
+            period = 35
+            adx = talib.ADX(high, low, close, period)[-1]
         if not np.isnan(adx):
             if adx > 20:
                 self.taData_trend_strat.marketDynamic = MarketDynamic.TRENDING
