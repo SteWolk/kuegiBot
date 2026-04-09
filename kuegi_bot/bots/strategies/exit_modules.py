@@ -8,7 +8,7 @@ from typing import List
 from kuegi_bot.indicators.indicator import Indicator, clean_range
 from kuegi_bot.utils.dotdict import dotdict
 from kuegi_bot.utils.trading_classes import Position, Bar, Symbol
-from kuegi_bot.indicators.indicator import Indicator, calc_atr
+from kuegi_bot.indicators.indicator import calc_atr
 
 
 def _entry_execution_type(position) -> str:

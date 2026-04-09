@@ -1,6 +1,5 @@
 import requests
 import threading
-import requests
 from requests import RequestException
 
 class TelegramBot:

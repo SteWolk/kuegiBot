@@ -857,13 +857,7 @@ def _passes_common_confirmation(ctx: EntryExecutionContext, opts: CommonRuleOpti
     return True
 
 
-def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) -> bool:
-    # Confirmation checks are treated as part of the unified filter layer.
-    if not _passes_common_confirmation(ctx, opts):
-        return False
-
-    ta = ctx.strategy.ta_data_trend_strat
-
+def _passes_market_state_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) -> bool:
     if opts.filter_forbid_market_bearish and ctx.entry_context.market_bearish:
         return False
     if opts.filter_forbid_market_bullish and ctx.entry_context.market_bullish:
@@ -878,7 +872,10 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
         return False
     if opts.filter_require_market_trending and not ctx.entry_context.market_trending:
         return False
+    return True
 
+
+def _passes_primary_indicator_filters(ctx: EntryExecutionContext, ta, opts: CommonRuleOptions) -> bool:
     natr = ctx.entry_context.natr_4h
     if opts.filter_natr_max_enabled:
         if natr is None or natr > opts.filter_natr_max:
@@ -904,7 +901,10 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
             return False
         if (volume_now / volume_sma) > opts.filter_vol_ratio_max:
             return False
+    return True
 
+
+def _passes_oi_ratio_filters(ta, opts: CommonRuleOptions) -> bool:
     oi_ratio_4h = _as_float(ta.oi_ratio_4h, float("nan"))
     oi_4h = _as_float(ta.oi_4h, float("nan"))
     if opts.filter_oi_ratio_4h_min_enabled:
@@ -919,18 +919,25 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
     if opts.filter_oi_above_sma_enabled:
         if (oi_ratio_4h != oi_ratio_4h) or (oi_ratio_4h < 1.0):
             return False
+    return True
 
-    if opts.filter_atr_std_ratio_max_enabled:
-        if not _len_at_least(ta.atr_4h_vec, 1) or not _len_at_least(ctx.entry_context.std_vec, 1):
-            return False
-        atr_prev = _as_float(ta.atr_4h_vec[-1], float("nan"))
-        std_prev = _as_float(ctx.entry_context.std_vec[-1], float("nan"))
-        if (std_prev != std_prev) or abs(std_prev) <= 1e-12:
-            return False
-        atr_std_ratio = atr_prev / std_prev
-        if (atr_std_ratio != atr_std_ratio) or (atr_std_ratio > opts.filter_atr_std_ratio_max):
-            return False
 
+def _passes_atr_std_ratio_filter(ctx: EntryExecutionContext, ta, opts: CommonRuleOptions) -> bool:
+    if not opts.filter_atr_std_ratio_max_enabled:
+        return True
+    if not _len_at_least(ta.atr_4h_vec, 1) or not _len_at_least(ctx.entry_context.std_vec, 1):
+        return False
+    atr_prev = _as_float(ta.atr_4h_vec[-1], float("nan"))
+    std_prev = _as_float(ctx.entry_context.std_vec[-1], float("nan"))
+    if (std_prev != std_prev) or abs(std_prev) <= 1e-12:
+        return False
+    atr_std_ratio = atr_prev / std_prev
+    if (atr_std_ratio != atr_std_ratio) or (atr_std_ratio > opts.filter_atr_std_ratio_max):
+        return False
+    return True
+
+
+def _passes_bb_and_shape_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) -> bool:
     if opts.filter_close_above_bb_max_enabled:
         if len(ctx.bars) < 2 or not _len_at_least(ctx.entry_context.middleband_vec, 1) or not _len_at_least(ctx.entry_context.std_vec, 1):
             return False
@@ -966,7 +973,10 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
             return False
         if not (_as_float(ctx.bars[1].open, 0.0) > _as_float(ctx.bars[4].close, 0.0)):
             return False
+    return True
 
+
+def _passes_oi_state_filters(ta, opts: CommonRuleOptions) -> bool:
     wanted_flow = normalize_oi_price_flow_state(opts.filter_oi_flow_state, default="off")
     forbidden_flow = normalize_oi_price_flow_state(opts.filter_forbid_oi_flow_state, default="off")
     if wanted_flow != "off" or forbidden_flow != "off":
@@ -980,6 +990,7 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
             return False
         if forbidden_flow != "off" and flow_state.value == forbidden_flow:
             return False
+
     wanted_oi_funding = normalize_oi_funding_state(opts.filter_oi_funding_state, default="off")
     forbidden_oi_funding = normalize_oi_funding_state(opts.filter_forbid_oi_funding_state, default="off")
     if wanted_oi_funding != "off" or forbidden_oi_funding != "off":
@@ -995,7 +1006,10 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
             return False
         if forbidden_oi_funding != "off" and oi_funding_state.value == forbidden_oi_funding:
             return False
+    return True
 
+
+def _passes_bar_range_atr_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) -> bool:
     atr = ctx.entry_context.atr
     if atr is not None and atr > 0 and len(ctx.bars) >= 2:
         bar_range_atr = (ctx.bars[1].high - ctx.bars[1].low) / atr
@@ -1003,10 +1017,27 @@ def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) 
             return False
         if opts.filter_min_bar_range_atr_enabled and bar_range_atr < opts.filter_min_bar_range_atr:
             return False
-    elif opts.filter_max_bar_range_atr_enabled or opts.filter_min_bar_range_atr_enabled:
+        return True
+    if opts.filter_max_bar_range_atr_enabled or opts.filter_min_bar_range_atr_enabled:
+        return False
+    return True
+
+
+def _passes_common_filters(ctx: EntryExecutionContext, opts: CommonRuleOptions) -> bool:
+    # Confirmation checks are treated as part of the unified filter layer.
+    if not _passes_common_confirmation(ctx, opts):
         return False
 
-    return True
+    ta = ctx.strategy.ta_data_trend_strat
+    return (
+        _passes_market_state_filters(ctx, opts)
+        and _passes_primary_indicator_filters(ctx, ta, opts)
+        and _passes_oi_ratio_filters(ta, opts)
+        and _passes_atr_std_ratio_filter(ctx, ta, opts)
+        and _passes_bb_and_shape_filters(ctx, opts)
+        and _passes_oi_state_filters(ta, opts)
+        and _passes_bar_range_atr_filters(ctx, opts)
+    )
 
 
 def module_passes_common_rules(module: Any, ctx: EntryExecutionContext) -> bool:
