@@ -6,6 +6,7 @@ import time
 
 import plotly.graph_objects as go
 from kuegi_bot.exchanges.bybit.bybit_interface import ByBitInterface
+from kuegi_bot.exchanges.ib.ib_interface import IBInterface
 from kuegi_bot.utils import log, errors
 from kuegi_bot.utils.telegram import TelegramBot
 from kuegi_bot.bots.trading_bot import TradingBot
@@ -37,6 +38,10 @@ class LiveTrading(OrderInterface):
             self.exchange = ByBitInterface(settings=settings, logger=self.logger,
                                            on_tick_callback=self.on_tick, on_api_error=self.on_api_error,
                                            on_execution_callback= trading_bot.on_execution)
+        elif settings.EXCHANGE in ['ib', 'ibkr', 'interactivebrokers', 'interactive-brokers']:
+            self.exchange = IBInterface(settings=settings, logger=self.logger,
+                                        on_tick_callback=self.on_tick,
+                                        on_execution_callback=trading_bot.on_execution)
         #elif settings.EXCHANGE == 'bybit-linear':
         #    self.exchange = ByBitLinearInterface(settings=settings, logger=self.logger,
         #                                   on_tick_callback=self.on_tick, on_api_error=self.on_api_error,

@@ -355,7 +355,13 @@ def run(settings):
             usedSettings = dict(settings)
             usedSettings = dotdict(usedSettings)
             usedSettings.update(botSetting)
-            if len(usedSettings.API_KEY) == 0 or len(usedSettings.API_SECRET) == 0:
+            exchange_name = str(getattr(usedSettings, "EXCHANGE", "")).lower()
+            if exchange_name in ["ib", "ibkr", "interactivebrokers", "interactive-brokers"]:
+                requires_key_secret = False
+            else:
+                requires_key_secret = True
+
+            if requires_key_secret and (len(usedSettings.API_KEY) == 0 or len(usedSettings.API_SECRET) == 0):
                 logger.error("You have to put in apiKey and secret before starting!")
             else:
                 logger.info("starting " + usedSettings.id)

@@ -21,7 +21,8 @@ setup(name='kuegi-bot',
           'websocket-client',
           'future',
           'plotly',
-          'bybit'
+          'bybit',
+          'ib-insync'
       ],
       packages=find_packages(),
       scripts=["cryptobot.py"],

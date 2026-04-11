@@ -96,6 +96,12 @@ Run with a settings file:
 py -3 cryptobot.py settings/cryptobot_Testnet.json
 ```
 
+Interactive Brokers is supported via `EXCHANGE=ib` (aliases: `ibkr`, `interactivebrokers`).
+The IB adapter connects to local TWS/IB Gateway using `ib-insync`, with these optional bot-level settings:
+`IB_HOST` (default `127.0.0.1`), `IB_PORT` (default `7496`, or `7497` when `IS_TEST=true`),
+`IB_CLIENT_ID`, `IB_ACCOUNT`, `IB_SEC_TYPE` (`FUT`/`STK`/`FX`/`CFD`), `IB_EXCHANGE`, `IB_CURRENCY`,
+and either `IB_CON_ID` or (for futures) `IB_LOCAL_SYMBOL` / `IB_LAST_TRADE_DATE_OR_CONTRACT_MONTH`.
+
 `cryptobot.py` loads `settings/defaults.json` first, then overlays the file you pass as argument.
 
 Use testnet/simulated configs first. Do not run live capital without independent validation, monitoring, and failure handling.
